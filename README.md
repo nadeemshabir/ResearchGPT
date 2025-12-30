@@ -209,10 +209,13 @@ ResearchGPT/
 
 ## 📚 Documentation
 
-- [Quick Start Guide](QUICKSTART.md)
+- [Quick Start Guide](docs/QUICKSTART.md)
+- [Setup Guide](docs/SETUP_GUIDE.md)
 - [Smart Routing Guide](docs/SMART_ROUTING_GUIDE.md)
 - [Web Interface Guide](docs/WEB_INTERFACE_GUIDE.md)
 - [Project Overview](docs/PROJECT_OVERVIEW.md)
+- [Visual Overview](docs/VISUAL_OVERVIEW.md)
+- [Cache Setup](docs/README_CACHE_SETUP.md)
 
 ---
 
