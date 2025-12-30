@@ -1,0 +1,58 @@
+# Virtual environment
+venv/
+env/
+.venv/
+
+# Environment variables
+.env
+.env.local
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Cache directories
+.cache/
+*.cache
+.pytest_cache/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Models (large files)
+models/
+
+# Chat history files
+chat_history_*.txt
+
+# Data files (if you don't want to include uploaded PDFs)
+# Uncomment the next line if you want to exclude data
+# data/
+
+# Jupyter Notebooks checkpoints
+.ipynb_checkpoints/

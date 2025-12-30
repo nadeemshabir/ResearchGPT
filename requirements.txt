@@ -1,0 +1,33 @@
+# Core Dependencies
+python-dotenv==1.0.0
+pydantic==2.5.0
+
+# PDF Processing
+PyPDF2==3.0.1
+pdfplumber==0.10.3
+pymupdf==1.23.8  # fitz - better for complex PDFs
+
+# Text Processing
+langchain==0.1.0
+langchain-community==0.0.13
+tiktoken==0.5.2  # Token counting
+
+# Embeddings
+sentence-transformers==2.3.1
+torch==2.1.2  # Required for sentence-transformers
+
+# Vector Database
+chromadb==0.4.22
+
+# LLM API
+groq==0.4.1
+openai==1.7.0  # Optional, if you want OpenAI
+google-generativeai==0.3.2  # Optional, for Gemini
+
+# Web UI
+streamlit==1.29.0
+
+# Utilities
+tqdm==4.66.1  # Progress bars
+python-magic==0.4.27  # File type detection
+rank-bm25
