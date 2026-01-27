@@ -1,23 +1,23 @@
 # Core Dependencies
-python-dotenv==1.0.0
-pydantic==2.5.0
+python-dotenv>=1.0.0
+pydantic>=2.5.0
 
 # PDF Processing
-PyPDF2==3.0.1
-pdfplumber==0.10.3
-pymupdf==1.23.8  # fitz - better for complex PDFs
+PyPDF2>=3.0.0
+pdfplumber>=0.10.0
+pymupdf>=1.23.0
 
 # Text Processing
-langchain==0.1.0
-langchain-community==0.0.13
-tiktoken==0.5.2  # Token counting
+langchain>=0.1.0
+langchain-community>=0.0.13
+tiktoken>=0.5.0
 
 # Embeddings
-sentence-transformers==2.3.1
-torch==2.1.2  # Required for sentence-transformers
+sentence-transformers>=2.3.0
+# torch is installed as dependency of sentence-transformers
 
 # Vector Database
-chromadb==0.4.22
+chromadb>=0.5.0
 
 # LLM API
 groq>=0.4.1
@@ -25,8 +25,8 @@ openai>=1.40.0
 google-generativeai>=0.8.0
 
 # Web UI
-streamlit==1.29.0
+streamlit>=1.29.0
 
 # Utilities
-tqdm==4.66.1  # Progress bars
+tqdm>=4.66.0
 rank-bm25
