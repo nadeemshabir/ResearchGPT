@@ -115,7 +115,8 @@ class AnswerGenerator:
         retrieval_result = self.retrieval_system.get_relevant_chunks(
             query=question,
             max_tokens=max_context_tokens,
-            min_score=0.5 if self.retrieval_system.use_reranking else 0.6
+            # Cross-encoder scores can be negative (-10 to +10), so use negative threshold
+            min_score=-10 if self.retrieval_system.use_reranking else 0.2
         )
         
         chunks = retrieval_result['chunks']

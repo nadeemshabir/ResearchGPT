@@ -56,3 +56,8 @@ chat_history_*.txt
 
 # Jupyter Notebooks checkpoints
 .ipynb_checkpoints/
+
+# Chroma / Vector DB
+data/chroma_db/
+*.bin
+*.sqlite3

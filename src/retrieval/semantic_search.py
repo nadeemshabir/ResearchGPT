@@ -7,8 +7,8 @@ import os
 from typing import List, Dict, Optional
 from pathlib import Path
 
-from ..ingestion.database import VectorDatabase
-from ..ingestion.embedder import EmbeddingGenerator
+from src.ingestion.database import VectorDatabase
+from src.ingestion.embedder import EmbeddingGenerator
 
 
 class SemanticSearcher:

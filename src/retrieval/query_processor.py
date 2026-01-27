@@ -1,5 +1,6 @@
 """
 Query Processing Module
+ is designed to "upgrade" the user's raw input before it gets sent to the search engine. Its goal is to make the search more robust and more likely to find relevant results.
 Clean, expand, and improve search queries
 """
 
@@ -7,7 +8,7 @@ import re
 from typing import List, Dict, Optional
 
 
-class QueryProcessor:
+class QueryProcessor: 
     """Process and enhance search queries"""
     
     def __init__(self):

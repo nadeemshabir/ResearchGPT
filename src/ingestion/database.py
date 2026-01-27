@@ -1,6 +1,7 @@
 """
 Vector Database Module
 Store and retrieve embeddings using ChromaDB
+both text and embeddings are stored in the database
 """
 
 import os
@@ -37,7 +38,7 @@ class VectorDatabase:
         print(f"   Path: {self.db_path}")
         print(f"   Collection: {self.collection_name}")
         
-        # Initialize ChromaDB client
+        # Initialize ChromaDB client,  This means data will be saved to disk and persist between restarts.
         self.client = chromadb.PersistentClient(path=self.db_path)
         
         # Get or create collection

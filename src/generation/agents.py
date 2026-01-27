@@ -90,7 +90,11 @@ class AnalyzerAgent(BaseAgent):
                 })
                 
             except Exception as e:
-                print(f"      ⚠️ Error analyzing chunk {i}: {str(e)}")
+                error_msg = str(e)
+                # Re-raise critical API errors instead of silently failing
+                if 'PermissionDenied' in error_msg or 'API' in error_msg or 'key' in error_msg.lower():
+                    raise Exception(f"LLM API Error: {error_msg}") from e
+                print(f"      ⚠️ Error analyzing chunk {i}: {error_msg}")
                 continue
         
         print(f"   ✅ Extracted information from {len(extractions)} chunks")

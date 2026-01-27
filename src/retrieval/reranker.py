@@ -1,6 +1,7 @@
 """
 Re-ranking Module
 Improve retrieval results using cross-encoder models
+It does not return vectors. It returns the semantic text content that the Answer Generator needs to actually write the response
 """
 
 import sys
