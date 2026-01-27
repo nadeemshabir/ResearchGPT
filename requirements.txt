@@ -20,14 +20,13 @@ torch==2.1.2  # Required for sentence-transformers
 chromadb==0.4.22
 
 # LLM API
-groq==0.4.1
-openai==1.7.0  # Optional, if you want OpenAI
-google-generativeai==0.3.2  # Optional, for Gemini
+groq>=0.4.1
+openai>=1.40.0
+google-generativeai>=0.8.0
 
 # Web UI
 streamlit==1.29.0
 
 # Utilities
 tqdm==4.66.1  # Progress bars
-python-magic==0.4.27  # File type detection
 rank-bm25
