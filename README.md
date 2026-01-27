@@ -8,7 +8,7 @@
 
 ResearchGPT is a complete Retrieval-Augmented Generation (RAG) system that allows you to upload PDF research papers, ask questions in natural language, and get AI-generated answers with citations.
 
-![ResearchGPT Demo](docs/demo.png)
+
 
 ---
 
