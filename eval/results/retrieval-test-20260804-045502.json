@@ -1,0 +1,50 @@
+{
+  "dataset": "BEIR/scifact:test",
+  "num_queries": 5,
+  "num_documents": 5183,
+  "embedding_model": "all-MiniLM-L6-v2",
+  "chunk_size": 1000,
+  "candidate_k": 50,
+  "generated_at": "2026-08-04T04:55:02.856577+00:00",
+  "results": [
+    {
+      "name": "bm25",
+      "description": "BM25 only",
+      "config": {
+        "name": "bm25",
+        "method": "bm25",
+        "semantic_weight": 0.7,
+        "keyword_weight": 0.3,
+        "fusion": "weighted",
+        "normalisation": "minmax",
+        "rrf_k": 60,
+        "rerank": false,
+        "candidate_k": 50,
+        "top_k": 10
+      },
+      "num_queries": 5,
+      "metrics": {
+        "hit@1": 0.4,
+        "hit@10": 0.6,
+        "hit@3": 0.4,
+        "hit@5": 0.4,
+        "mrr": 0.4333,
+        "ndcg@1": 0.4,
+        "ndcg@10": 0.4437,
+        "ndcg@3": 0.4,
+        "ndcg@5": 0.4,
+        "precision@1": 0.4,
+        "precision@10": 0.06,
+        "precision@3": 0.1333,
+        "precision@5": 0.08,
+        "recall@1": 0.4,
+        "recall@10": 0.5,
+        "recall@3": 0.4,
+        "recall@5": 0.4
+      },
+      "mean_latency_ms": 48.7,
+      "p95_latency_ms": 84.2,
+      "total_seconds": 0.2
+    }
+  ]
+}
