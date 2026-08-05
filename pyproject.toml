@@ -1,0 +1,45 @@
+[project]
+name = "researchgpt"
+version = "0.2.0"
+description = "Retrieval-augmented question answering over research papers"
+readme = "README.md"
+license = { file = "LICENSE" }
+requires-python = ">=3.10"
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+exclude = ["venv", ".venv", "data", ".cache"]
+
+[tool.ruff.lint]
+select = [
+    "E",    # pycodestyle errors
+    "F",    # pyflakes
+    "I",    # import sorting
+    "UP",   # pyupgrade
+    "B",    # bugbear
+    "SIM",  # simplify
+    "T20",  # flake8-print: no print() in library code
+]
+ignore = [
+    "E501",  # line length is handled by the formatter
+    "B008",  # function call in default argument (Streamlit idiom)
+]
+
+[tool.ruff.lint.per-file-ignores]
+# The Streamlit app is the presentation layer; scripts are CLIs. Both are
+# allowed to write to stdout. Nothing under src/ is.
+"app.py" = ["T20"]
+"scripts/*" = ["T20"]
+"eval/*" = ["T20"]
+
+[tool.mypy]
+python_version = "3.10"
+warn_unused_configs = true
+ignore_missing_imports = true
+check_untyped_defs = true
+exclude = ["venv", "\\.venv", "data"]
+
+[tool.pytest.ini_options]
+testpaths = ["test"]
+addopts = "-q --strict-markers"

@@ -1,426 +1,353 @@
+"""Streamlit interface for ResearchGPT.
 
+This is the presentation layer: it is the only place that formats output for a
+human. Everything under ``src/`` logs instead of printing, so this module owns
+all user-facing rendering.
+"""
+
+from __future__ import annotations
+
+import tempfile
+import time
+from datetime import datetime
+from pathlib import Path
+from typing import Any
 
 import streamlit as st
-import os
-import time
-from pathlib import Path
-from datetime import datetime
 
-# Import your backend modules
-from src.ingestion.pipeline import IngestionPipeline
+from src.config import DEFAULT_MODELS, get_settings
+from src.exceptions import (
+    ConfigurationError,
+    LLMAuthenticationError,
+    LLMError,
+    PDFParseError,
+    ResearchGPTError,
+)
 from src.generation.answer_generator import AnswerGenerator
+from src.ingestion.pipeline import IngestionPipeline
+from src.retrieval.retrieval_system import RetrievalSystem
+from src.utils.logging import get_logger, setup_logging
 
-# Page configuration
+setup_logging()
+logger = get_logger(__name__)
+
 st.set_page_config(
     page_title="ResearchGPT",
-    page_icon="🎓",
+    page_icon="🔬",
     layout="wide",
-    initial_sidebar_state="expanded"
+    initial_sidebar_state="expanded",
 )
 
-# Custom CSS for better styling
-st.markdown("""
-<style>
-    .main-header {
-        font-size: 3rem;
-        font-weight: bold;
-        text-align: center;
-        color: #1f77b4;
-        margin-bottom: 1rem;
-    }
-    .sub-header {
-        font-size: 1.2rem;
-        text-align: center;
-        color: #666;
-        margin-bottom: 2rem;
-    }
-    .answer-box {
-        background-color: #f0f2f6;
-        padding: 20px;
-        border-radius: 10px;
-        border-left: 5px solid #1f77b4;
-    }
-    .source-box {
-        background-color: #e8f4f8;
-        padding: 15px;
-        border-radius: 8px;
-        margin: 10px 0;
-    }
-    .metric-card {
-        background-color: #ffffff;
-        padding: 15px;
-        border-radius: 10px;
-        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-    }
-    .stButton>button {
-        width: 100%;
-        border-radius: 8px;
-        height: 3em;
-        font-weight: 600;
-    }
-</style>
-""", unsafe_allow_html=True)
+MODEL_CHOICES: dict[str, list[str]] = {
+    "groq": ["llama-3.3-70b-versatile", "llama-3.1-8b-instant"],
+    "openai": ["gpt-4o-mini", "gpt-4o"],
+    "gemini": ["gemini-2.5-flash", "gemini-2.5-flash-lite", "gemini-2.5-pro"],
+}
 
-# Initialize session state
-if 'generator' not in st.session_state:
-    st.session_state.generator = None
-if 'ingestion_pipeline' not in st.session_state:
-    st.session_state.ingestion_pipeline = None
-if 'chat_history' not in st.session_state:
-    st.session_state.chat_history = []
-if 'uploaded_papers' not in st.session_state:
-    st.session_state.uploaded_papers = []
-if 'initialized' not in st.session_state:
-    st.session_state.initialized = False
+for key, default in (
+    ("generator", None),
+    ("pipeline", None),
+    ("chat_history", []),
+    ("papers", []),
+    ("initialized", False),
+    ("pending_query", None),
+):
+    st.session_state.setdefault(key, default)
 
-# Sidebar for settings
+
+def render_error(exc: Exception) -> None:
+    """Show an actionable message for a known failure, generic text otherwise."""
+    if isinstance(exc, LLMAuthenticationError):
+        st.error(f"**API key rejected.** {exc}")
+    elif isinstance(exc, ConfigurationError):
+        st.error(f"**Configuration problem.** {exc}")
+    elif isinstance(exc, PDFParseError):
+        st.error(f"**Could not read that PDF.** {exc}")
+    elif isinstance(exc, (LLMError, ResearchGPTError)):
+        st.error(f"**{type(exc).__name__}.** {exc}")
+    else:
+        st.error(f"**Unexpected error.** {exc}")
+        logger.exception("Unhandled error in UI")
+
+
+def sync_papers_from_database(pipeline: IngestionPipeline) -> None:
+    """Populate the paper list from the store.
+
+    Without this, restarting the app shows an empty library even though the
+    ChromaDB collection is fully populated.
+    """
+    try:
+        stored = pipeline.database.list_papers()
+    except ResearchGPTError:
+        logger.warning("Could not read paper list from the store", exc_info=True)
+        return
+
+    known = {paper["paper_id"] for paper in st.session_state.papers}
+    for paper in stored:
+        if paper["paper_id"] not in known:
+            st.session_state.papers.append(
+                {
+                    "paper_id": paper["paper_id"],
+                    "filename": paper.get("title") or paper["paper_id"],
+                    "upload_time": "previously indexed",
+                    "stats": {"num_chunks": paper.get("num_chunks", 0)},
+                }
+            )
+
+
+# ---------------------------------------------------------------------------
+# Sidebar
+# ---------------------------------------------------------------------------
+settings = get_settings()
+
 with st.sidebar:
-    st.image("https://img.icons8.com/fluency/96/000000/artificial-intelligence.png", width=80)
-    st.title("⚙️ Settings")
-    
-    st.markdown("---")
-    
-    # LLM Configuration
-    st.subheader("🤖 LLM Configuration")
-    llm_provider = st.selectbox(
+    st.title("ResearchGPT")
+    st.caption("RAG over your research papers")
+    st.divider()
+
+    st.subheader("Model")
+    provider_options = list(DEFAULT_MODELS)
+    provider = st.selectbox(
         "Provider",
-        ["groq", "openai", "gemini"],
-        index=0,
-        help="Choose your LLM provider"
+        provider_options,
+        index=provider_options.index(settings.llm_provider),
     )
-    
-    # Model selection based on provider
-    if llm_provider == "groq":
-        llm_model = st.selectbox(
-            "Model",
-            ["llama-3.3-70b-versatile", "mixtral-8x7b-32768"],
-            help="Groq models (fast & free tier available)"
-        )
-    elif llm_provider == "openai":
-        llm_model = st.selectbox(
-            "Model",
-            ["gpt-4o-mini", "gpt-4o", "gpt-4"],
-            help="OpenAI models"
-        )
-    else:  # gemini
-        llm_model = st.selectbox(
-            "Model",
-            ["gemini-1.5-flash", "gemini-1.5-pro"],
-            help="Google Gemini models"
-        )
-    
-    st.markdown("---")
-    
-    # Generation Settings
-    st.subheader("🎯 Generation Settings")
+    if provider is None:
+        provider = settings.llm_provider
+    model = st.selectbox("Model", MODEL_CHOICES[provider])
+
+    if not settings.api_key_for(provider):
+        st.warning(f"No API key found for {provider}. Add it to your `.env` file.")
+
+    st.divider()
+    st.subheader("Generation")
     use_multi_agent = st.checkbox(
-        "Multi-Agent Pipeline",
-        value=True,
-        help="Use 4-stage pipeline for higher quality (slower)"
+        "Multi-agent pipeline",
+        value=settings.use_multi_agent,
+        help=(
+            "Four stages: analyze, synthesize, cite, critique. Higher quality "
+            "in principle, but roughly one LLM call per retrieved chunk plus "
+            "three, so several times slower and costlier than single-shot."
+        ),
     )
-    
-    use_citations = st.checkbox(
-        "Add Citations",
-        value=True,
-        help="Include academic citations in answers"
-    )
-    
+    use_citations = st.checkbox("Add citations", value=settings.use_citations)
     use_smart_routing = st.checkbox(
-        "Smart Routing",
-        value=True,
-        help="Auto-detect query type (Q&A, comparison, review)"
+        "Smart routing",
+        value=settings.use_smart_routing,
+        help="Detect comparisons and literature reviews and handle them differently.",
     )
-    
-    st.markdown("---")
-    
-    # Retrieval Settings
-    st.subheader("🔍 Retrieval Settings")
-    top_k = st.slider(
-        "Top-K Results",
-        min_value=3,
-        max_value=20,
-        value=10,
-        help="Number of chunks to retrieve"
-    )
-    
+
+    st.divider()
+    st.subheader("Retrieval")
+    top_k = st.slider("Chunks retrieved", 3, 20, settings.top_k_rerank)
     max_context_tokens = st.slider(
-        "Max Context Tokens",
-        min_value=2000,
-        max_value=8000,
-        value=4000,
-        step=500,
-        help="Maximum context size for LLM"
+        "Context budget (tokens)", 1000, 8000, settings.max_context_tokens, step=500
     )
-    
-    st.markdown("---")
-    
-    # Initialize button
-    if st.button("🚀 Initialize System", type="primary"):
-        with st.spinner("Initializing ResearchGPT..."):
+
+    st.divider()
+    if st.button("Initialize system", type="primary", use_container_width=True):
+        with st.spinner("Loading models and opening the vector store..."):
             try:
-                # Initialize ingestion pipeline
-                st.session_state.ingestion_pipeline = IngestionPipeline()
-                
-                # Initialize answer generator
-                st.session_state.generator = AnswerGenerator(
+                pipeline = IngestionPipeline()
+                # Reuse the pipeline's embedding model and open collection so
+                # the model is loaded once, not twice.
+                retrieval = RetrievalSystem(
+                    embedder=pipeline.embedder, database=pipeline.database
+                )
+                generator = AnswerGenerator(
                     use_multi_agent=use_multi_agent,
                     use_citations=use_citations,
-                    llm_provider=llm_provider,
-                    llm_model=llm_model,
-                    use_smart_routing=use_smart_routing
+                    llm_provider=provider,
+                    llm_model=model,
+                    use_smart_routing=use_smart_routing,
+                    retrieval_system=retrieval,
                 )
-                
+                st.session_state.pipeline = pipeline
+                st.session_state.generator = generator
                 st.session_state.initialized = True
-                st.success("✅ System initialized successfully!")
-                time.sleep(1)
+                sync_papers_from_database(pipeline)
+                st.success("Ready.")
+                time.sleep(0.5)
                 st.rerun()
-            except Exception as e:
-                st.error(f"❌ Initialization failed: {str(e)}")
-    
-    st.markdown("---")
-    
-    # System status
-    st.subheader("📊 System Status")
+            except Exception as exc:  # noqa: BLE001 - surfaced to the user
+                render_error(exc)
+
+    st.divider()
+    st.subheader("Status")
     if st.session_state.initialized:
-        st.success("🟢 Ready")
-        st.metric("Papers Uploaded", len(st.session_state.uploaded_papers))
-        st.metric("Conversations", len(st.session_state.chat_history))
+        st.success("Ready")
+        stats = st.session_state.generator.get_stats()
+        col_a, col_b = st.columns(2)
+        col_a.metric("Papers", stats["retrieval"]["num_papers"])
+        col_b.metric("Chunks", stats["retrieval"]["num_chunks"])
+        st.caption(
+            f"{stats['llm']['provider']} / {stats['llm']['model']} - "
+            f"{'hybrid + rerank' if stats['retrieval']['use_reranking'] else 'hybrid'}"
+        )
     else:
-        st.warning("🟡 Not Initialized")
-        st.info("👆 Click 'Initialize System' to start")
+        st.info("Not initialized")
 
-# Main content area
-st.markdown('<div class="main-header">🎓 ResearchGPT</div>', unsafe_allow_html=True)
-st.markdown('<div class="sub-header">AI-Powered Research Paper Analysis</div>', unsafe_allow_html=True)
 
-# Check if system is initialized
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
+st.title("ResearchGPT")
+st.caption("Ask questions about your papers and get answers grounded in their text.")
+
 if not st.session_state.initialized:
-    st.info("👈 Please configure settings in the sidebar and click 'Initialize System' to begin")
-    
-    # Show features
-    st.markdown("---")
+    st.info("Configure the sidebar and click **Initialize system** to begin.")
     col1, col2, col3 = st.columns(3)
-    
-    with col1:
-        st.markdown("### 📄 Upload Papers")
-        st.write("Upload PDF research papers and let AI analyze them")
-    
-    with col2:
-        st.markdown("### 💬 Ask Questions")
-        st.write("Ask anything in natural language and get AI-generated answers")
-    
-    with col3:
-        st.markdown("### 🎯 Smart Routing")
-        st.write("Automatically detects Q&A, comparisons, and literature reviews")
-    
+    col1.markdown("**Upload papers**\n\nIndex PDFs into a searchable vector store.")
+    col2.markdown("**Ask questions**\n\nHybrid retrieval plus cross-encoder reranking.")
+    col3.markdown("**Get citations**\n\nAnswers point back to the source passages.")
     st.stop()
 
-# Tabs for different functionalities
-tab1, tab2, tab3 = st.tabs(["📄 Upload Papers", "💬 Chat & Ask Questions", "📚 View Papers"])
+upload_tab, chat_tab, library_tab = st.tabs(["Upload", "Ask", "Library"])
 
-# TAB 1: Upload Papers
-with tab1:
-    st.header("📄 Upload Research Papers")
-    st.write("Upload PDF files to add them to your knowledge base")
-    
+# --- Upload ---------------------------------------------------------------
+with upload_tab:
+    st.subheader("Upload research papers")
     uploaded_files = st.file_uploader(
-        "Choose PDF files",
-        type=['pdf'],
-        accept_multiple_files=True,
-        help="Upload one or more PDF research papers"
+        "PDF files", type=["pdf"], accept_multiple_files=True
     )
-    
-    if uploaded_files:
-        if st.button("🔄 Process Uploaded Papers", type="primary"):
-            progress_bar = st.progress(0)
-            status_text = st.empty()
-            
-            for idx, uploaded_file in enumerate(uploaded_files):
-                # Update progress
-                progress = (idx + 1) / len(uploaded_files)
-                progress_bar.progress(progress)
-                status_text.text(f"Processing {uploaded_file.name}...")
-                
-                try:
-                    # Save uploaded file temporarily
-                    temp_path = Path("data/raw") / uploaded_file.name
-                    temp_path.parent.mkdir(parents=True, exist_ok=True)
-                    
-                    with open(temp_path, "wb") as f:
-                        f.write(uploaded_file.getbuffer())
-                    
-                    # Process the paper
-                    stats = st.session_state.ingestion_pipeline.process_paper(str(temp_path))
-                    
-                    # Store in session state
-                    st.session_state.uploaded_papers.append({
-                        'filename': uploaded_file.name,
-                        'paper_id': stats['paper_id'],
-                        'upload_time': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                        'stats': stats
-                    })
-                    
-                    st.success(f"✅ {uploaded_file.name} processed successfully!")
-                    st.json(stats)
-                    
-                except Exception as e:
-                    st.error(f"❌ Error processing {uploaded_file.name}: {str(e)}")
-            
-            progress_bar.progress(1.0)
-            status_text.text("✅ All papers processed!")
-            time.sleep(2)
+
+    if uploaded_files and st.button("Process papers", type="primary"):
+        progress = st.progress(0.0)
+        status = st.empty()
+        succeeded = 0
+
+        for index, uploaded_file in enumerate(uploaded_files, 1):
+            status.text(f"Processing {uploaded_file.name} ({index}/{len(uploaded_files)})")
+            progress.progress(index / len(uploaded_files))
+
+            # Write to a temp file rather than into data/raw: uploads are
+            # inputs to indexing, not artifacts that belong in the repo.
+            temp_path: Path | None = None
+            try:
+                with tempfile.NamedTemporaryFile(
+                    suffix=".pdf", delete=False
+                ) as handle:
+                    handle.write(uploaded_file.getbuffer())
+                    temp_path = Path(handle.name)
+
+                stats = st.session_state.pipeline.process_paper(
+                    temp_path, paper_id=Path(uploaded_file.name).stem
+                )
+                st.session_state.papers.append(
+                    {
+                        "paper_id": stats["paper_id"],
+                        "filename": uploaded_file.name,
+                        "upload_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                        "stats": stats,
+                    }
+                )
+                succeeded += 1
+                st.success(
+                    f"{uploaded_file.name}: {stats['num_chunks']} chunks across "
+                    f"{stats['num_sections']} sections in {stats['processing_time_seconds']}s"
+                )
+            except Exception as exc:  # noqa: BLE001 - per-file, keep going
+                render_error(exc)
+            finally:
+                if temp_path and temp_path.exists():
+                    temp_path.unlink(missing_ok=True)
+
+        status.text(f"Done: {succeeded}/{len(uploaded_files)} indexed.")
+        if succeeded:
+            time.sleep(1)
             st.rerun()
 
-# TAB 2: Chat & Ask Questions
-with tab2:
-    st.header("💬 Ask Questions About Your Papers")
-    
-    if len(st.session_state.uploaded_papers) == 0:
-        st.warning("⚠️ No papers uploaded yet. Please upload papers in the 'Upload Papers' tab first.")
+# --- Ask ------------------------------------------------------------------
+with chat_tab:
+    st.subheader("Ask a question")
+
+    if not st.session_state.papers:
+        st.warning("No papers indexed yet. Upload some in the **Upload** tab.")
     else:
-        # Display chat history
-        if st.session_state.chat_history:
-            st.subheader("📝 Conversation History")
-            
-            for chat in st.session_state.chat_history:
-                with st.container():
-                    st.markdown(f"**🧑 You:** {chat['question']}")
-                    st.markdown(f"**🤖 ResearchGPT:** {chat['answer']}")
-                    
-                    # Show metadata
-                    with st.expander("ℹ️ Details"):
-                        col1, col2, col3 = st.columns(3)
-                        with col1:
-                            st.metric("Query Type", chat['metadata'].get('query_type', 'N/A'))
-                        with col2:
-                            st.metric("Confidence", f"{chat['metadata'].get('routing_confidence', 0):.2%}")
-                        with col3:
-                            st.metric("Sources", chat['metadata'].get('num_sources', 0))
-                        
-                        if chat.get('sources'):
-                            st.markdown("**📚 Sources:**")
-                            for source in chat['sources'][:3]:  # Show top 3
-                                st.markdown(f"- {source.get('title', 'Unknown')}")
-                    
-                    st.markdown("---")
-            
-            # Action buttons for chat history
-            col1, col2 = st.columns([1, 1])
-            with col1:
-                if st.button("🗑️ Clear History", use_container_width=True):
-                    st.session_state.chat_history = []
-                    st.rerun()
-            
-            with col2:
-                if st.button("💾 Save Chat to File", use_container_width=True):
-                    # Save chat history to file
-                    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                    filename = f"chat_history_{timestamp}.txt"
-                    
-                    with open(filename, "w", encoding="utf-8") as f:
-                        for chat in st.session_state.chat_history:
-                            f.write(f"Q: {chat['question']}\n")
-                            f.write(f"A: {chat['answer']}\n")
-                            f.write("-" * 80 + "\n\n")
-                    
-                    st.success(f"✅ Chat saved to {filename}")
-            
-            st.markdown("---")
-        
-        # Chat input using a form to properly handle submission
-        st.subheader("🔍 Ask a Question")
-        
-        # Initialize the pending query state if not exists
-        if 'pending_query' not in st.session_state:
-            st.session_state.pending_query = None
-        
-        # Use a form to properly handle submission (prevents infinite loop)
-        with st.form(key="chat_form", clear_on_submit=True):
-            query_input = st.text_input(
-                "Your question:",
-                placeholder="Ask anything: What is BERT? | Compare BERT and GPT | Review papers on transformers"
-            )
-            submit_button = st.form_submit_button("🚀 Ask Question", type="primary")
-            
-            if submit_button and query_input:
-                st.session_state.pending_query = query_input
-        
-        # Process the pending query outside the form
+        for entry in st.session_state.chat_history:
+            with st.chat_message("user"):
+                st.write(entry["question"])
+            with st.chat_message("assistant"):
+                st.write(entry["answer"])
+                meta: dict[str, Any] = entry.get("metadata", {})
+
+                if meta.get("refused"):
+                    st.caption("No relevant content was found, so no answer was generated.")
+                else:
+                    cols = st.columns(4)
+                    cols[0].metric("Sources", meta.get("num_sources", 0))
+                    cols[1].metric("Time", f"{meta.get('processing_time', 0):.1f}s")
+                    cols[2].metric("Type", meta.get("query_type_label", "Q&A"))
+                    cols[3].metric("Tokens", meta.get("total_tokens", 0))
+
+                if entry.get("sources"):
+                    with st.expander(f"Sources ({len(entry['sources'])})"):
+                        for source in entry["sources"]:
+                            st.markdown(
+                                f"**{source.get('title', 'Unknown')}** "
+                                f"- {source.get('section', 'Unknown')} "
+                                f"(score {source.get('relevance_score', 0):.2f})"
+                            )
+                            st.caption(source.get("chunk_preview", ""))
+
+        if st.session_state.chat_history and st.button("Clear history"):
+            st.session_state.chat_history = []
+            st.rerun()
+
+        question = st.chat_input("Ask about your papers...")
+        if question:
+            st.session_state.pending_query = question
+            st.rerun()
+
         if st.session_state.pending_query:
-            query_to_process = st.session_state.pending_query
-            st.session_state.pending_query = None  # Clear immediately to prevent reprocessing
-            
-            with st.spinner("🤔 Thinking..."):
+            pending = st.session_state.pending_query
+            st.session_state.pending_query = None
+
+            with st.spinner("Retrieving and generating..."):
                 try:
-                    start_time = time.time()
-                    
-                    # Generate answer using smart routing
                     response = st.session_state.generator.smart_answer(
-                        user_query=query_to_process,
+                        user_query=pending,
                         top_k=top_k,
-                        max_context_tokens=max_context_tokens
+                        max_context_tokens=max_context_tokens,
                     )
-                    
-                    processing_time = time.time() - start_time
-                    
-                    # Add to chat history
-                    st.session_state.chat_history.append({
-                        'question': query_to_process,
-                        'answer': response['answer'],
-                        'sources': response.get('sources', []),
-                        'metadata': response.get('metadata', {}),
-                        'timestamp': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                        'processing_time': processing_time
-                    })
-                    
+                    st.session_state.chat_history.append(
+                        {
+                            "question": pending,
+                            "answer": response["answer"],
+                            "sources": response.get("sources", []),
+                            "metadata": response.get("metadata", {}),
+                            "timestamp": datetime.now().isoformat(timespec="seconds"),
+                        }
+                    )
                     st.rerun()
-                    
-                except Exception as e:
-                    st.error(f"❌ Error generating answer: {str(e)}")
-                    st.exception(e)
+                except Exception as exc:  # noqa: BLE001 - surfaced to the user
+                    render_error(exc)
 
-# TAB 3: View Papers
-with tab3:
-    st.header("📚 Uploaded Papers")
-    
-    if len(st.session_state.uploaded_papers) == 0:
-        st.info("No papers uploaded yet")
+# --- Library --------------------------------------------------------------
+with library_tab:
+    st.subheader("Indexed papers")
+
+    if not st.session_state.papers:
+        st.info("Nothing indexed yet.")
     else:
-        st.write(f"Total papers: **{len(st.session_state.uploaded_papers)}**")
-        
-        for paper in st.session_state.uploaded_papers:
-            with st.expander(f"📄 {paper['filename']}"):
-                col1, col2 = st.columns(2)
-                
-                with col1:
-                    st.markdown(f"**Paper ID:** `{paper['paper_id']}`")
-                    st.markdown(f"**Upload Time:** {paper['upload_time']}")
-                
-                with col2:
-                    stats = paper['stats']
-                    st.markdown(f"**Pages:** {stats.get('num_pages', 'N/A')}")
-                    st.markdown(f"**Chunks:** {stats.get('num_chunks', 'N/A')}")
-                    st.markdown(f"**Processing Time:** {stats.get('processing_time_seconds', 0):.2f}s")
-                
-                if st.button(f"🗑️ Delete {paper['filename']}", key=f"delete_{paper['paper_id']}"):
-                    try:
-                        # Remove from database
-                        from src.ingestion.database import VectorDatabase
-                        db = VectorDatabase()
-                        db.delete_paper(paper['paper_id'])
-                        
-                        # Remove from list
-                        st.session_state.uploaded_papers.remove(paper)
-                        st.success(f"✅ Removed {paper['filename']} from database and list")
-                        st.rerun()
-                    except Exception as e:
-                        st.error(f"❌ Error deleting: {str(e)}")
+        st.caption(f"{len(st.session_state.papers)} paper(s) in the collection")
 
-# Footer
-st.markdown("---")
-st.markdown(
-    "<div style='text-align: center; color: #666;'>"
-    "Built with ❤️ using Streamlit | ResearchGPT v1.0"
-    "</div>",
-    unsafe_allow_html=True
-)
+        for paper in list(st.session_state.papers):
+            with st.expander(paper["filename"]):
+                stats = paper.get("stats", {})
+                col1, col2 = st.columns(2)
+                col1.markdown(f"**ID:** `{paper['paper_id']}`")
+                col1.markdown(f"**Indexed:** {paper['upload_time']}")
+                col2.markdown(f"**Pages:** {stats.get('num_pages', 'n/a')}")
+                col2.markdown(f"**Chunks:** {stats.get('num_chunks', 'n/a')}")
+
+                if st.button("Remove from index", key=f"del_{paper['paper_id']}"):
+                    try:
+                        removed = st.session_state.pipeline.database.delete_paper(
+                            paper["paper_id"]
+                        )
+                        st.session_state.papers.remove(paper)
+                        st.success(f"Removed {removed} chunks.")
+                        st.rerun()
+                    except Exception as exc:  # noqa: BLE001
+                        render_error(exc)

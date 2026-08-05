@@ -1,253 +1,214 @@
-"""
-Complete Ingestion Pipeline
-Orchestrates PDF processing from upload to database storage
-"""
+"""End-to-end ingestion: PDF file to indexed, queryable chunks."""
 
-import os
+from __future__ import annotations
+
 import time
 from pathlib import Path
-from typing import Optional, Dict
-from dotenv import load_dotenv
+from typing import Any
 
-from .pdf_parser import PDFParser
-from .chunker import TextChunker
-from .embedder import EmbeddingGenerator
-from .database import VectorDatabase
+from src.config import PDFMethod, get_settings
+from src.exceptions import IngestionError, PDFParseError, ResearchGPTError
+from src.ingestion.chunker import TextChunker
+from src.ingestion.database import VectorDatabase
+from src.ingestion.embedder import EmbeddingGenerator
+from src.ingestion.pdf_parser import PDFParser
+from src.utils.logging import get_logger
 
-load_dotenv()
+logger = get_logger(__name__)
 
 
 class IngestionPipeline:
-    """Complete pipeline for processing and storing research papers"""
-    
+    """Parse, chunk, embed, and store research papers."""
+
     def __init__(
         self,
-        pdf_method: str = "pymupdf",
-        chunk_size: int = None,
-        chunk_overlap: int = None,
-        embedding_model: str = None
+        pdf_method: PDFMethod | None = None,
+        chunk_size: int | None = None,
+        chunk_overlap: int | None = None,
+        embedding_model: str | None = None,
+        database: VectorDatabase | None = None,
+        embedder: EmbeddingGenerator | None = None,
     ):
         """
-        Initialize ingestion pipeline
-        
         Args:
-            pdf_method: PDF parsing method
-            chunk_size: Chunk size in tokens
-            chunk_overlap: Overlap between chunks
-            embedding_model: Embedding model name
+            pdf_method: PDF backend. Defaults to ``Settings.pdf_method``.
+            chunk_size: Tokens per chunk. Defaults to ``Settings.chunk_size``.
+            chunk_overlap: Token overlap. Defaults to ``Settings.chunk_overlap``.
+            embedding_model: Defaults to ``Settings.embedding_model``.
+            database: Reuse an existing store instead of opening another.
+            embedder: Reuse a loaded model instead of loading it twice.
         """
-        print("🚀 Initializing Ingestion Pipeline...")
-        print("="*60)
-        
-        # Initialize components
+        logger.info("Initialising ingestion pipeline")
+
         self.pdf_parser = PDFParser(method=pdf_method)
         self.chunker = TextChunker(chunk_size=chunk_size, chunk_overlap=chunk_overlap)
-        self.embedder = EmbeddingGenerator(model_name=embedding_model)
-        self.database = VectorDatabase()
-        
-        print("="*60)
-        print("✅ Pipeline ready!")
-    
+        self.embedder = embedder or EmbeddingGenerator(model_name=embedding_model)
+        self.database = database or VectorDatabase()
+
+        # Fail now, with a clear message, rather than on the first query.
+        self.database.verify_embedding_model(
+            self.embedder.model_name, self.embedder.embedding_dim
+        )
+
+        logger.info("Ingestion pipeline ready")
+
     def process_paper(
         self,
-        pdf_path: str,
-        paper_id: Optional[str] = None,
-        use_context: bool = True
-    ) -> Dict:
-        """
-        Process a single paper through the complete pipeline
-        
+        pdf_path: str | Path,
+        paper_id: str | None = None,
+        use_sections: bool = True,
+    ) -> dict[str, Any]:
+        """Run one PDF through the full pipeline.
+
         Args:
-            pdf_path: Path to PDF file
-            paper_id: Unique identifier (uses filename if None)
-            use_context: Whether to use context-aware chunking
-            
+            pdf_path: Path to the PDF.
+            paper_id: Unique id. Defaults to the filename stem.
+            use_sections: Chunk section by section rather than as flat text.
+
         Returns:
-            Processing statistics
+            Ingestion statistics for the paper.
+
+        Raises:
+            PDFParseError: The file could not be read.
+            IngestionError: Chunking, embedding, or storage failed.
         """
-        start_time = time.time()
-        
-        # Generate paper ID if not provided
-        if paper_id is None:
-            paper_id = Path(pdf_path).stem
-        
-        print(f"\n{'='*60}")
-        print(f"PROCESSING PAPER: {paper_id}")
-        print(f"{'='*60}")
-        
-        # Step 1: Extract text from PDF
-        print("\n📄 Step 1: Extracting text from PDF...")
-        pdf_result = self.pdf_parser.extract_text(pdf_path)
-        
-        # Clean text
-        text = self.pdf_parser.clean_text(pdf_result['text'])
-        
-        # Step 2: Chunk text
-        print(f"\n🔪 Step 2: Chunking text...")
-        if use_context:
-            chunks = self.chunker.chunk_with_context(
-                text=text,
-                metadata=pdf_result['metadata']
-            )
+        start = time.perf_counter()
+        path = Path(pdf_path)
+        paper_id = paper_id or path.stem
+
+        logger.info("Ingesting %r from %s", paper_id, path.name)
+
+        # 1. Parse. Section detection needs the original line breaks, so the
+        #    raw text is chunked first and each chunk cleaned afterwards.
+        parsed = self.pdf_parser.extract_text(path)
+        raw_text = parsed["text"]
+
+        # 2. Chunk.
+        if use_sections:
+            chunks = self.chunker.chunk_with_context(raw_text, metadata=parsed["metadata"])
         else:
-            chunks = self.chunker.chunk_text(
-                text=text,
-                metadata=pdf_result['metadata']
+            chunks = self.chunker.chunk_text(raw_text, metadata=parsed["metadata"])
+
+        for chunk in chunks:
+            chunk["text"] = self.pdf_parser.clean_text(chunk["text"])
+        chunks = [c for c in chunks if c["text"].strip()]
+
+        if not chunks:
+            raise IngestionError(
+                f"{path.name} produced no usable chunks after cleaning."
             )
-        
-        # Step 3: Generate embeddings
-        print(f"\n🧠 Step 3: Generating embeddings...")
-        chunks_with_embeddings = self.embedder.embed_chunks(chunks)
-        
-        # Step 4: Store in database
-        print(f"\n💾 Step 4: Storing in database...")
-        paper_metadata = {
-            'title': pdf_result['metadata'].get('title', Path(pdf_path).stem),
-            'author': pdf_result['metadata'].get('author', 'Unknown'),
-            'file_name': pdf_result['file_name'],
-            'num_pages': pdf_result['num_pages']
-        }
-        
-        num_stored = self.database.add_chunks(
-            chunks=chunks_with_embeddings,
-            paper_id=paper_id,
-            paper_metadata=paper_metadata
+
+        chunk_stats = self.chunker.summarise(chunks)
+        logger.info(
+            "%r: %d chunks across %d sections (avg %.0f tokens)",
+            paper_id,
+            chunk_stats["num_chunks"],
+            chunk_stats["num_sections"],
+            chunk_stats["avg_tokens"],
         )
-        
-        # Calculate stats
-        processing_time = time.time() - start_time
-        
-        stats = {
-            'paper_id': paper_id,
-            'file_name': pdf_result['file_name'],
-            'num_pages': pdf_result['num_pages'],
-            'num_chunks': len(chunks),
-            'num_stored': num_stored,
-            'processing_time_seconds': round(processing_time, 2),
-            'metadata': paper_metadata
+
+        # 3. Embed.
+        chunks = self.embedder.embed_chunks(chunks)
+
+        # 4. Store.
+        paper_metadata = {
+            "title": parsed["metadata"].get("title") or path.stem,
+            "author": parsed["metadata"].get("author") or "Unknown",
+            "file_name": parsed["file_name"],
+            "num_pages": parsed["num_pages"],
         }
-        
-        print(f"\n{'='*60}")
-        print("✅ PROCESSING COMPLETE")
-        print(f"{'='*60}")
-        print(f"Paper ID: {paper_id}")
-        print(f"Pages: {stats['num_pages']}")
-        print(f"Chunks created: {stats['num_chunks']}")
-        print(f"Chunks stored: {stats['num_stored']}")
-        print(f"Processing time: {stats['processing_time_seconds']}s")
-        print(f"{'='*60}\n")
-        
-        return stats
-    
+        num_stored = self.database.add_chunks(
+            chunks=chunks, paper_id=paper_id, paper_metadata=paper_metadata
+        )
+
+        elapsed = time.perf_counter() - start
+        logger.info(
+            "Ingested %r: %d chunks stored in %.2fs", paper_id, num_stored, elapsed
+        )
+
+        return {
+            "paper_id": paper_id,
+            "file_name": parsed["file_name"],
+            "num_pages": parsed["num_pages"],
+            "num_chunks": len(chunks),
+            "num_stored": num_stored,
+            "num_sections": chunk_stats["num_sections"],
+            "avg_tokens_per_chunk": chunk_stats["avg_tokens"],
+            "processing_time_seconds": round(elapsed, 2),
+            "metadata": paper_metadata,
+            "status": "success",
+        }
+
     def process_directory(
         self,
-        directory_path: str,
-        file_pattern: str = "*.pdf"
-    ) -> list[Dict]:
-        """
-        Process all PDFs in a directory
-        
+        directory_path: str | Path,
+        file_pattern: str = "*.pdf",
+        continue_on_error: bool = True,
+    ) -> list[dict[str, Any]]:
+        """Ingest every PDF in a directory.
+
         Args:
-            directory_path: Path to directory containing PDFs
-            file_pattern: File pattern to match (default: *.pdf)
-            
+            directory_path: Directory to scan.
+            file_pattern: Glob pattern.
+            continue_on_error: Record per-file failures and carry on. When
+                ``False``, the first failure aborts the batch.
+
         Returns:
-            List of processing statistics for each paper
+            One result record per file; failures carry ``status="failed"``
+            and an ``error`` message.
+
+        Raises:
+            IngestionError: The directory does not exist.
         """
         directory = Path(directory_path)
-        
-        if not directory.exists():
-            raise FileNotFoundError(f"Directory not found: {directory}")
-        
-        # Find all PDFs
-        pdf_files = list(directory.glob(file_pattern))
-        
+        if not directory.is_dir():
+            raise IngestionError(f"Not a directory: {directory}")
+
+        pdf_files = sorted(directory.glob(file_pattern))
         if not pdf_files:
-            print(f"⚠️  No PDF files found in {directory}")
+            logger.warning("No files matching %r in %s", file_pattern, directory)
             return []
-        
-        print(f"\n{'='*60}")
-        print(f"BATCH PROCESSING: {len(pdf_files)} PDFs")
-        print(f"{'='*60}")
-        
-        all_stats = []
-        successful = 0
-        failed = 0
-        
-        for i, pdf_file in enumerate(pdf_files, 1):
-            print(f"\n[{i}/{len(pdf_files)}] Processing: {pdf_file.name}")
-            
+
+        logger.info("Batch ingesting %d files from %s", len(pdf_files), directory)
+
+        results: list[dict[str, Any]] = []
+        succeeded = 0
+
+        for index, pdf_file in enumerate(pdf_files, 1):
+            logger.info("[%d/%d] %s", index, len(pdf_files), pdf_file.name)
             try:
-                stats = self.process_paper(str(pdf_file))
-                all_stats.append(stats)
-                successful += 1
-            except Exception as e:
-                print(f"❌ ERROR processing {pdf_file.name}: {str(e)}")
-                failed += 1
-                all_stats.append({
-                    'file_name': pdf_file.name,
-                    'error': str(e),
-                    'status': 'failed'
-                })
-        
-        # Print summary
-        print(f"\n{'='*60}")
-        print("BATCH PROCESSING COMPLETE")
-        print(f"{'='*60}")
-        print(f"Total PDFs: {len(pdf_files)}")
-        print(f"Successful: {successful}")
-        print(f"Failed: {failed}")
-        print(f"{'='*60}\n")
-        
-        return all_stats
-    
-    def get_pipeline_stats(self) -> Dict:
-        """Get statistics about the pipeline and database"""
-        db_stats = self.database.get_stats()
-        model_info = self.embedder.get_model_info()
-        
+                results.append(self.process_paper(pdf_file))
+                succeeded += 1
+            except (PDFParseError, ResearchGPTError) as exc:
+                logger.error("Failed to ingest %s: %s", pdf_file.name, exc)
+                if not continue_on_error:
+                    raise
+                results.append(
+                    {
+                        "paper_id": pdf_file.stem,
+                        "file_name": pdf_file.name,
+                        "status": "failed",
+                        "error": str(exc),
+                        "error_type": type(exc).__name__,
+                    }
+                )
+
+        logger.info(
+            "Batch complete: %d succeeded, %d failed", succeeded, len(pdf_files) - succeeded
+        )
+        return results
+
+    def get_stats(self) -> dict[str, Any]:
+        """Current pipeline and store configuration, for the UI and health checks."""
+        settings = get_settings()
         return {
-            'database': db_stats,
-            'embedding_model': model_info,
-            'chunker': {
-                'chunk_size': self.chunker.chunk_size,
-                'chunk_overlap': self.chunker.chunk_overlap
-            }
+            "database": self.database.get_stats(),
+            "embedding_model": self.embedder.get_model_info(),
+            "chunker": {
+                "chunk_size": self.chunker.chunk_size,
+                "chunk_overlap": self.chunker.chunk_overlap,
+                "encoding": self.chunker.encoding_name,
+            },
+            "pdf_method": self.pdf_parser.method,
+            "max_pdf_size_mb": settings.max_pdf_size_mb,
         }
-
-
-def main():
-    """Example usage of the ingestion pipeline"""
-    
-    # Initialize pipeline
-    pipeline = IngestionPipeline(
-        pdf_method="pymupdf",
-        chunk_size=1000,
-        chunk_overlap=200,
-        embedding_model="all-MiniLM-L6-v2"  # Fast model for testing
-    )
-    
-    # Test with single PDF
-    # test_pdf = "data/raw/test_paper.pdf"
-
-    # Test with directory of PDFs
-    test_pdf = "data/raw/"
-    
-    if os.path.exists(test_pdf):
-        print("\n🧪 Processing single test paper...")
-        # stats = pipeline.process_paper(test_pdf)
-
-        stats = pipeline.process_directory(test_pdf)
-        
-        # Show database stats
-        pipeline.database.print_stats()
-    else:
-        print(f"\n⚠️  Test PDF not found: {test_pdf}")
-        print("   Please place a PDF in data/raw/test_paper.pdf")
-        print("\n📂 To process multiple PDFs:")
-        print("   1. Place PDFs in data/raw/")
-        print("   2. Run: pipeline.process_directory('data/raw/')")
-
-
-if __name__ == "__main__":
-    main()

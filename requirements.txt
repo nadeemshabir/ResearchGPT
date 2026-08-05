@@ -1,32 +1,40 @@
-# Core Dependencies
-python-dotenv>=1.0.0
-pydantic>=2.5.0
+# Runtime dependencies.
+#
+# Lower bounds only for now; Milestone 3 pins these exactly for reproducible
+# Docker builds. Install with: pip install -r requirements.txt
 
-# PDF Processing
-PyPDF2>=3.0.0
-pdfplumber>=0.10.0
-pymupdf>=1.23.0
+# --- Configuration --------------------------------------------------------
+pydantic>=2.5
+pydantic-settings>=2.0
+python-dotenv>=1.0
 
-# Text Processing
-langchain>=0.1.0
-langchain-community>=0.0.13
-tiktoken>=0.5.0
+# --- PDF parsing ----------------------------------------------------------
+pymupdf>=1.23
+pdfplumber>=0.10
+PyPDF2>=3.0
 
-# Embeddings
-sentence-transformers>=2.3.0
-# torch is installed as dependency of sentence-transformers
+# --- Chunking -------------------------------------------------------------
+# The full `langchain` + `langchain-community` packages were previously pulled
+# in for a single text splitter; this is that same class without the framework.
+langchain-text-splitters>=0.2
+tiktoken>=0.5
 
-# Vector Database
-chromadb>=0.5.0
+# --- Embeddings and reranking ---------------------------------------------
+sentence-transformers>=2.3
+# torch arrives via sentence-transformers; pin it explicitly only if you need
+# a specific CUDA build.
 
-# LLM API
+# --- Vector store ---------------------------------------------------------
+chromadb>=0.5
+
+# --- Lexical search -------------------------------------------------------
+rank-bm25>=0.2.2
+numpy>=1.24
+
+# --- LLM providers (only the one you use is needed at runtime) ------------
 groq>=0.4.1
-openai>=1.40.0
-google-generativeai>=0.8.0
+openai>=1.40
+google-generativeai>=0.8
 
-# Web UI
-streamlit>=1.29.0
-
-# Utilities
-tqdm>=4.66.0
-rank-bm25
+# --- UI -------------------------------------------------------------------
+streamlit>=1.29

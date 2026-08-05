@@ -1,38 +1,30 @@
-# Virtual environment
-venv/
-env/
-.venv/
-
-# Environment variables
+# Secrets
 .env
 .env.local
+.env.*.local
+
+# Virtual environments
+venv/
+.venv/
+env/
 
 # Python
 __pycache__/
 *.py[cod]
-*$py.class
 *.so
-.Python
 build/
-develop-eggs/
 dist/
-downloads/
-eggs/
 .eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
-wheels/
 *.egg-info/
-.installed.cfg
-*.egg
 
-# Cache directories
+# Tooling caches
 .cache/
-*.cache
 .pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.ipynb_checkpoints/
 
 # IDE
 .idea/
@@ -40,24 +32,24 @@ wheels/
 *.swp
 *.swo
 
-# OS
-.DS_Store
-Thumbs.db
-
-# Models (large files)
+# Model weights
 models/
 
-# Chat history files
-chat_history_*.txt
-
-# Data files (if you don't want to include uploaded PDFs)
-# Uncomment the next line if you want to exclude data
-# data/
-
-# Jupyter Notebooks checkpoints
-.ipynb_checkpoints/
-
-# Chroma / Vector DB
+# Local data. The vector store is a build artifact, rebuilt by re-ingesting,
+# so it is not versioned. These paths are scoped deliberately: the previous
+# blanket `*.bin` / `*.sqlite3` patterns were broad enough to silently hide
+# legitimate files anywhere in the tree.
 data/chroma_db/
-*.bin
-*.sqlite3
+data/raw/*.pdf
+!data/raw/.gitkeep
+
+# The BEIR/SciFact index, ~75 MB, rebuilt automatically by `make eval`.
+data/eval_chroma/
+
+# Evaluation evidence: the JSON results are committed on purpose -- they are
+# what docs/EVALUATION.md cites. The console logs are not: they are mostly
+# progress-bar output and add tens of megabytes over time.
+eval/results/*.log
+
+# Saved chat transcripts
+chat_history_*.txt

@@ -1,246 +1,121 @@
-"""
-Embedding Generator Module
-Converts text chunks into vector embeddings
-"""
+"""Embedding generation via sentence-transformers."""
 
-import os
-from typing import List
-import torch
-from sentence_transformers import SentenceTransformer
-from tqdm import tqdm
-from dotenv import load_dotenv
+from __future__ import annotations
 
-load_dotenv()
+from typing import Any
+
+from src.config import get_settings
+from src.exceptions import IngestionError
+from src.utils.device import resolve_device
+from src.utils.logging import get_logger
+
+logger = get_logger(__name__)
 
 
 class EmbeddingGenerator:
-    """Generate embeddings for text chunks"""
-    
-    def __init__(self, model_name: str = None, device: str = None):
+    """Turn text into dense vectors.
+
+    The model is loaded eagerly in ``__init__`` (a few seconds on first run
+    while weights download) so that a bad model name fails at startup rather
+    than on the first query.
+    """
+
+    def __init__(
+        self,
+        model_name: str | None = None,
+        device: str | None = None,
+        batch_size: int | None = None,
+    ):
         """
-        Initialize embedding generator
-        
         Args:
-            model_name: Name of sentence-transformer model (default from .env)
-            device: Device to use ('cpu', 'cuda', 'mps') - auto-detected if None
+            model_name: sentence-transformers model id. Defaults to
+                ``Settings.embedding_model``.
+            device: ``"cpu"``, ``"cuda"``, or ``"mps"``. Auto-detected if omitted.
+            batch_size: Texts encoded per forward pass.
+
+        Raises:
+            IngestionError: The model could not be loaded.
         """
-        self.model_name = model_name or os.getenv('EMBEDDING_MODEL', 'allenai/specter')
-        
-        # Auto-detect device if not specified
-        if device is None:
-            if torch.cuda.is_available():
-                device = 'cuda'
-            elif torch.backends.mps.is_available():
-                device = 'mps'  # Apple Silicon
-            else:
-                device = 'cpu'
-        
-        self.device = device
-        
-        print(f"🧠 Loading embedding model: {self.model_name}")
-        print(f"   Device: {self.device}")
-        
-        # Load model
-        self.model = SentenceTransformer(self.model_name, device=self.device)
-        
-        # Get embedding dimension
-        self.embedding_dim = self.model.get_sentence_embedding_dimension()
-        
-        print(f"✅ Model loaded")
-        print(f"   Embedding dimension: {self.embedding_dim}")
-    
-    def generate_embeddings(self, texts: List[str], batch_size: int = 32, show_progress: bool = True) -> List[List[float]]:
-        """
-        Generate embeddings for a list of texts
-        
+        settings = get_settings()
+        self.model_name = model_name or settings.embedding_model
+        self.batch_size = batch_size or settings.embedding_batch_size
+        self.device = resolve_device(device or settings.embedding_device)
+
+        logger.info("Loading embedding model %s on %s", self.model_name, self.device)
+
+        try:
+            from sentence_transformers import SentenceTransformer
+
+            self.model = SentenceTransformer(self.model_name, device=self.device)
+        except Exception as exc:  # noqa: BLE001 - surface as a typed error
+            raise IngestionError(
+                f"Could not load embedding model {self.model_name!r} on device "
+                f"{self.device!r}: {exc}"
+            ) from exc
+
+        self.embedding_dim: int = self.model.get_sentence_embedding_dimension()
+        logger.info("Embedding model ready (%d dimensions)", self.embedding_dim)
+
+    def generate_embeddings(
+        self,
+        texts: list[str],
+        batch_size: int | None = None,
+        show_progress: bool = False,
+    ) -> list[list[float]]:
+        """Embed a list of texts.
+
         Args:
-            texts: List of text strings to embed
-            batch_size: Number of texts to process at once
-            show_progress: Whether to show progress bar
-            
+            texts: Texts to embed. An empty list returns an empty list.
+            batch_size: Overrides the instance default.
+            show_progress: Render a progress bar. Off by default; it writes to
+                stdout, which library code should not do unattended.
+
         Returns:
-            List of embedding vectors
+            One vector per input text, in the same order.
         """
         if not texts:
             return []
-        
-        print(f"\n🔢 Generating embeddings for {len(texts)} texts...")
-        
-        # Generate embeddings
+
+        logger.debug("Embedding %d texts", len(texts))
         embeddings = self.model.encode(
             texts,
-            batch_size=batch_size,
+            batch_size=batch_size or self.batch_size,
             show_progress_bar=show_progress,
-            convert_to_numpy=True
+            convert_to_numpy=True,
         )
-        
-        print(f"✅ Generated {len(embeddings)} embeddings")
-        print(f"   Shape: {embeddings.shape}")
-        
-        # Convert to list of lists for storage
         return embeddings.tolist()
-    
-    def generate_single_embedding(self, text: str) -> List[float]:
+
+    def generate_single_embedding(self, text: str) -> list[float]:
+        """Embed one string.
+
+        Raises:
+            ValueError: ``text`` is empty or whitespace only.
         """
-        Generate embedding for a single text
-        
-        Args:
-            text: Text string to embed
-            
-        Returns:
-            Embedding vector
-        """
-        embedding = self.model.encode(text, convert_to_numpy=True)
-        return embedding.tolist()
-    
-    def embed_chunks(self, chunks: List[dict], batch_size: int = 32) -> List[dict]:
-        """
-        Generate embeddings for chunks and add to chunk dictionaries
-        
-        Args:
-            chunks: List of chunk dictionaries with 'text' field
-            batch_size: Batch size for encoding
-            
-        Returns:
-            Chunks with added 'embedding' field
-        """
-        # Extract texts
-        texts = [chunk['text'] for chunk in chunks]
-        
-        # Generate embeddings
+        if not text or not text.strip():
+            raise ValueError("Cannot embed empty text.")
+        return self.model.encode(text, convert_to_numpy=True).tolist()
+
+    def embed_chunks(
+        self,
+        chunks: list[dict[str, Any]],
+        batch_size: int | None = None,
+    ) -> list[dict[str, Any]]:
+        """Attach an ``embedding`` field to each chunk in place."""
+        if not chunks:
+            return []
+
+        texts = [chunk["text"] for chunk in chunks]
         embeddings = self.generate_embeddings(texts, batch_size=batch_size)
-        
-        # Add embeddings to chunks
-        for chunk, embedding in zip(chunks, embeddings):
-            chunk['embedding'] = embedding
-        
+
+        for chunk, embedding in zip(chunks, embeddings, strict=True):
+            chunk["embedding"] = embedding
         return chunks
-    
-    def get_model_info(self) -> dict:
-        """Get information about the embedding model"""
+
+    def get_model_info(self) -> dict[str, Any]:
+        """Return model identity and shape, for logging and DB provenance."""
         return {
-            'model_name': self.model_name,
-            'embedding_dimension': self.embedding_dim,
-            'device': self.device,
-            'max_seq_length': self.model.max_seq_length
+            "model_name": self.model_name,
+            "embedding_dimension": self.embedding_dim,
+            "device": self.device,
+            "max_seq_length": getattr(self.model, "max_seq_length", None),
         }
-
-
-class MultiModelEmbedder:
-    """
-    Use multiple embedding models for comparison or ensemble
-    """
-    
-    def __init__(self, model_names: List[str], device: str = None):
-        """
-        Initialize multiple embedding models
-        
-        Args:
-            model_names: List of model names to use
-            device: Device to use
-        """
-        self.models = {}
-        
-        for model_name in model_names:
-            print(f"\nLoading model: {model_name}")
-            self.models[model_name] = EmbeddingGenerator(model_name, device)
-    
-    def generate_embeddings(self, texts: List[str], model_name: str = None) -> List[List[float]]:
-        """
-        Generate embeddings using specified model
-        
-        Args:
-            texts: List of texts to embed
-            model_name: Which model to use (uses first if None)
-            
-        Returns:
-            List of embeddings
-        """
-        if model_name is None:
-            model_name = list(self.models.keys())[0]
-        
-        if model_name not in self.models:
-            raise ValueError(f"Model {model_name} not loaded")
-        
-        return self.models[model_name].generate_embeddings(texts)
-    
-    def compare_models(self, sample_text: str):
-        """
-        Compare embeddings from different models
-        
-        Args:
-            sample_text: Text to embed with all models
-        """
-        print(f"\n{'='*60}")
-        print("MODEL COMPARISON")
-        print(f"{'='*60}")
-        print(f"Sample text: {sample_text[:100]}...")
-        print()
-        
-        embeddings = {}
-        for model_name, generator in self.models.items():
-            embedding = generator.generate_single_embedding(sample_text)
-            embeddings[model_name] = embedding
-            print(f"{model_name}:")
-            print(f"  Dimension: {len(embedding)}")
-            print(f"  First 5 values: {embedding[:5]}")
-            print()
-
-
-def test_embedder():
-    """Test the embedding generator"""
-    
-    # Sample texts
-    sample_texts = [
-        "Transformers are neural network architectures based on attention mechanisms.",
-        "BERT uses bidirectional attention to understand context.",
-        "GPT models generate text using autoregressive language modeling.",
-        "Attention mechanisms allow models to focus on relevant information."
-    ]
-    
-    print("="*60)
-    print("TEST 1: Single Model")
-    print("="*60)
-    
-    # Test single model
-    embedder = EmbeddingGenerator(model_name='all-MiniLM-L6-v2')  # Faster for testing, check other models in notes/.env
-    #if we dont want to specify model_name, we can just do embedder = EmbeddingGenerator()
-    
-    # Generate embeddings
-    embeddings = embedder.generate_embeddings(sample_texts)
-    
-    print(f"\nGenerated {len(embeddings)} embeddings")
-    print(f"Embedding dimension: {len(embeddings[0])}")
-    print(f"First embedding (first 5 values): {embeddings[0][:5]}")
-    
-    # Test with chunks
-    print("\n" + "="*60)
-    print("TEST 2: Embed Chunks")
-    print("="*60)
-    
-    chunks = [
-        {'text': text, 'chunk_id': i}
-        for i, text in enumerate(sample_texts)
-    ]
-    
-    chunks_with_embeddings = embedder.embed_chunks(chunks)
-    
-    print(f"\nProcessed {len(chunks_with_embeddings)} chunks")
-    print(f"Chunk 0 has embedding: {'embedding' in chunks_with_embeddings[0]}")
-    print(f"Embedding length: {len(chunks_with_embeddings[0]['embedding'])}")
-    print(type(embeddings))
-    print(type(embeddings[0]))
-    print(len(embeddings))
-    print(len(embeddings[0]))
-
-    # Model info
-    print("\n" + "="*60)
-    print("MODEL INFO")
-    print("="*60)
-    info = embedder.get_model_info()
-    for key, value in info.items():
-        print(f"{key}: {value}")
-
-
-if __name__ == "__main__":
-    test_embedder()
