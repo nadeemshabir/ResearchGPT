@@ -1,0 +1,231 @@
+{
+  "mode": "single",
+  "threshold": 0.4,
+  "num_unanswerable": 23,
+  "num_answerable": 15,
+  "correct_refusals": 21,
+  "false_answers": 2,
+  "false_refusals": 1,
+  "refusal_rate": 0.913,
+  "false_refusal_rate": 0.0667,
+  "unanswerable": [
+    {
+      "question": "What is the capital city of France?",
+      "kind": "off_topic",
+      "refused": true,
+      "best_similarity": 0.0
+    },
+    {
+      "question": "How long should I bake sourdough bread?",
+      "kind": "off_topic",
+      "refused": true,
+      "best_similarity": 0.4053
+    },
+    {
+      "question": "how much protein should I consume daily for gaining 2 kg of muscle in 2 months?",
+      "kind": "off_topic",
+      "refused": true,
+      "best_similarity": 0.0
+    },
+    {
+      "question": "What is the best recipe for a chocolate cake?",
+      "kind": "off_topic",
+      "refused": true,
+      "best_similarity": 0.0
+    },
+    {
+      "question": "What is the population of Tokyo in 2023?",
+      "kind": "off_topic",
+      "refused": true,
+      "best_similarity": 0.0
+    },
+    {
+      "question": "What is the most effective way to treat depression?",
+      "kind": "off_topic",
+      "refused": true,
+      "best_similarity": 0.0
+    },
+    {
+      "question": "What is the most effective way to prevent heart disease?",
+      "kind": "off_topic",
+      "refused": true,
+      "best_similarity": 0.0
+    },
+    {
+      "question": "What is the latest research on quantum computing?",
+      "kind": "off_topic",
+      "refused": true,
+      "best_similarity": 0.4033
+    },
+    {
+      "question": "What reward model did BERT use during RLHF training?",
+      "kind": "near_miss",
+      "refused": true,
+      "best_similarity": 0.5129
+    },
+    {
+      "question": "What was BERT's score on the SuperGLUE leaderboard?",
+      "kind": "near_miss",
+      "refused": false,
+      "best_similarity": 0.4918
+    },
+    {
+      "question": "What was AlexNet's top-5 error rate in the ILSVRC-2015 challenge?",
+      "kind": "near_miss",
+      "refused": true,
+      "best_similarity": 0.5651
+    },
+    {
+      "question": "How many attention heads does the Transformer use in its 24-layer configuration?",
+      "kind": "near_miss",
+      "refused": false,
+      "best_similarity": 0.4951
+    },
+    {
+      "question": "How many parameters does GPT-4 use during pretraining?",
+      "kind": "near_miss",
+      "refused": true,
+      "best_similarity": 0.5218
+    },
+    {
+      "question": "How does DeepSeek-R1 perform on the ARC-AGI benchmark?",
+      "kind": "near_miss",
+      "refused": true,
+      "best_similarity": 0.5753
+    },
+    {
+      "question": "What is the context window length of Llama 4?",
+      "kind": "near_miss",
+      "refused": true,
+      "best_similarity": 0.469
+    },
+    {
+      "question": "Which vision encoder does InstructGPT use for image inputs?",
+      "kind": "near_miss",
+      "refused": true,
+      "best_similarity": 0.5026
+    },
+    {
+      "question": "What dropout rate did DeepSeek-R1 use in its convolutional layers?",
+      "kind": "near_miss",
+      "refused": true,
+      "best_similarity": 0.5181
+    },
+    {
+      "question": "Which model will be state of the art in 2030?",
+      "kind": "unknowable",
+      "refused": true,
+      "best_similarity": 0.4609
+    },
+    {
+      "question": "What is the weather forecast for New York City on July 4, 2025?",
+      "kind": "unknowable",
+      "refused": true,
+      "best_similarity": 0.0
+    },
+    {
+      "question": "What is the best strategy to win the FIFA World Cup in 2026?",
+      "kind": "unknowable",
+      "refused": true,
+      "best_similarity": 0.4211
+    },
+    {
+      "question": "What is the most effective way to reduce global warming by 2050?",
+      "kind": "unknowable",
+      "refused": true,
+      "best_similarity": 0.4062
+    },
+    {
+      "question": "What will be the next big breakthrough in AI research?",
+      "kind": "unknowable",
+      "refused": true,
+      "best_similarity": 0.499
+    },
+    {
+      "question": "What is the GDP of India in 2026?",
+      "kind": "unknowable",
+      "refused": true,
+      "best_similarity": 0.0
+    }
+  ],
+  "answerable": [
+    {
+      "question": "How does the training time of a four-layer convolutional neural network with ReLUs compare to an equivalent network with tanh neurons on the CIFAR-10 dataset?",
+      "refused": false,
+      "best_similarity": 0.643
+    },
+    {
+      "question": "What is the difference between dot-product attention and additive attention in terms of computational efficiency and performance for large values of dk?",
+      "refused": false,
+      "best_similarity": 0.6263
+    },
+    {
+      "question": "What hardware configuration was used for training BERTLARGE and how long did the pre-training take to complete?",
+      "refused": false,
+      "best_similarity": 0.4978
+    },
+    {
+      "question": "What type of reward is introduced during RL training to mitigate the issue of language mixing in CoT, and how is it calculated?",
+      "refused": false,
+      "best_similarity": 0.4925
+    },
+    {
+      "question": "How does the performance of few-shot GPT-3 compare to prior unsupervised NMT work when translating into English for the input languages studied?",
+      "refused": false,
+      "best_similarity": 0.704
+    },
+    {
+      "question": "What is the purpose of the list C in the code for calculating the binomial coefficient?",
+      "refused": false,
+      "best_similarity": 0.4055
+    },
+    {
+      "question": "What is the performance of Llama 3-V 8B on the TVQA validation set?",
+      "refused": false,
+      "best_similarity": 0.5413
+    },
+    {
+      "question": "What are the three developmental paradigms within the RAG framework, as outlined in the analysis?",
+      "refused": false,
+      "best_similarity": 0.5023
+    },
+    {
+      "question": "What are the top-1 and top-5 error rates on the Fall 2009 version of ImageNet achieved by the described network with an additional convolutional layer?",
+      "refused": false,
+      "best_similarity": 0.6178
+    },
+    {
+      "question": "How does the number of operations required to relate signals from two arbitrary input or output positions grow in the ConvS2S and ByteNet models?",
+      "refused": false,
+      "best_similarity": 0.4801
+    },
+    {
+      "question": "What is the goal of the CoLA task, and what type of classification task is it?",
+      "refused": true,
+      "best_similarity": 0.4359
+    },
+    {
+      "question": "What are the performance metrics of DeepSeek-R1-Distill-Qwen-32B on the Reasoning-Related Benchmarks, and how does it compare to DeepSeek-R1-Zero-Qwen-32B?",
+      "refused": false,
+      "best_similarity": 0.6431
+    },
+    {
+      "question": "What message did Joaquin Phoenix convey on the red carpet at the Golden Globes with his tuxedo and a paper bag over his head?",
+      "refused": false,
+      "best_similarity": 0.5177
+    },
+    {
+      "question": "How was the winning prefix determined in the prefix-finding competition between authors RL and DA using GPT-3?",
+      "refused": false,
+      "best_similarity": 0.5243
+    },
+    {
+      "question": "What filetypes are annotated for in the context of Llama 3 performing tasks involving file uploads?",
+      "refused": false,
+      "best_similarity": 0.5497
+    }
+  ],
+  "gates_measured": "retrieval+model",
+  "model": "gemini/gemini-2.5-flash",
+  "generated_at": "2026-08-05T17:58:28.305906+00:00"
+}

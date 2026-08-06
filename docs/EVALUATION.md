@@ -11,9 +11,12 @@ paired with biomedical abstracts.
 
 ## Summary of findings
 
-Twelve findings, each with the measurement behind it. Findings 1-8 come from
-the retrieval benchmark, 9-12 from the generation evaluation. Full detail in
-the sections that follow.
+Sixteen findings, each with the measurement behind it. Findings 1-8 come from
+the retrieval benchmark, 9-16 from the generation and refusal evaluation. Full
+detail in the sections that follow.
+
+Worth noting up front: **eight of the sixteen were bugs in the evaluation code,
+not the system.** Twice, a failure was being scored as a success.
 
 | # | Finding | Evidence | Verdict |
 |---|---|---|---|
@@ -29,6 +32,13 @@ the sections that follow.
 | 10 | Generator choice moves generation metrics, not retrieval ones | `context_recall` identical at 0.9225 across two models | Validates the metrics |
 | 11 | The citation audit both under- and over-counted | Missed `[Source N:]`; scored quoted references as fabricated | **Bug fixed** |
 | 12 | 5 of 8 papers carried no title, so nothing was citable | Citation rate 0.1628 → 0.3023 after recovering titles | **Bug fixed** |
+| 13 | Citing in code beat citing with an LLM, on every axis | Rate 1.0000 vs 0.7209, 0 fabrications vs 3, 1 API call vs 4 | **Default changed** |
+| 14 | Refusals written in prose were counted as fabrications | 5 of 5 correct refusals scored as failures | **Bug fixed** |
+| 15 | The prompt was fine; the refusal *measurement* was broken | 23/23 unanswerable refused once both gates were counted | `0.40` kept |
+| 16 | The harness scored API failures as successful answers | Two runs minutes apart read 1/15 and 0/15 on identical code | **Bug fixed** |
+| 17 | The judge barely discriminates: 13 of 23 answers scored exactly 1.0 | κ = −0.195 at every cut-off tried, robust to dropping any single row | **Scores withdrawn** |
+| 18 | Two of five human "unsupported" verdicts did not survive review | Removing them moved ρ from +0.141 to +0.365 | Calibration set too small |
+| 19 | The test set contains questions built from example prompts | A question about "list C" comes from a code sample inside InstructGPT | Open |
 
 ### Every score, in one place
 
@@ -566,6 +576,285 @@ paper referenced by BERT but never retrieved — a correct catch.
 writes prose — *"According to the excerpts, ..."* — instead of a bracketed
 citation. That is a prompt problem and remains open.
 
+## Finding #13: citing in code beat citing with an LLM
+
+The 30% citation rate above was measured on the single-shot path, which has no
+citation stage at all -- those were citations the base model happened to write
+unprompted. That was the wrong thing to measure, and the multi-agent number
+(0.7209) is the fair comparison for the LLM approach.
+
+The question that reframed the problem: *every chunk already stores
+`paper_id`, `title` and `section_title`, and `_format_sources()` already maps
+chunks back to papers with no model involved -- so why is an LLM being asked to
+do a lookup?*
+
+It should not be. `CitationManager.add_paragraph_citations()` now scores each
+paragraph against each retrieved chunk by content-word overlap and appends the
+sources that clear a threshold.
+
+| | LLM single-shot | LLM multi-agent | **Deterministic** |
+|---|---|---|---|
+| citation rate | 0.3023 | 0.7209 | **1.0000** |
+| fabricated citations | 2 | 3 | **0** |
+| citation coverage | 0.2151 | — | **0.9225** |
+| extra LLM calls | 0 | 3 | **0** |
+| median latency | 3.2 s | — | **2.7 s** |
+| faithfulness | 0.8726 | 0.8681 | 0.8581 |
+| answer_relevancy | 0.8133 | 0.7530 | 0.7999 |
+
+**The 1.0000 is guaranteed by construction, not discovered.** Every paragraph
+matching a chunk gets a citation, and retrieval always returns chunks, so the
+rate cannot be anything else. The numbers that carry information are coverage
+(0.9225 -- the *right* sources get named) and fabrications (0 -- impossible,
+since sources come from a fixed list of retrieved chunks).
+
+Placement rules, chosen for readability:
+
+- Citations go at the **end of a paragraph**, never after each sentence.
+- A paragraph drawing on several papers gets one group: `[A, 2017; B, 2012]`.
+- One paper split across two chunks is cited once.
+- Headings and bullet lists are never cited.
+- A paragraph matching nothing above the threshold is left uncited.
+
+Three problems surfaced while building it:
+
+**The model wrote its own citations too**, producing visible duplicates.
+Stripping them by pattern failed, because models invent formats freely -- the
+same model produced `[Attention is All you Need, Undated]` and
+`[Training language models... | Section: Model, Figure 2]` in one run. The fix
+is semantic rather than syntactic: **a bracketed span is a citation if it names
+a source that was retrieved.** The titles are known, so this catches every
+variant. The prompt now also asks the model not to cite when citations are
+attached afterwards.
+
+**The year read `n.d.`** because PDF metadata rarely carries one -- but the
+paper ids do (`attention_2017`), so it is parsed from there.
+
+**The audit undercounted merged groups.** `[A, 2017; B, 2012]` was split on
+`,` only, so the second title was invisible and coverage read 0.5 on answers
+that had cited everything.
+
+## Findings #14 and #15: the refusal measurement, not the prompt
+
+Refusal happens in two places, and only one was being counted:
+
+1. **Retrieval** raises `NoRelevantContextError` when nothing clears
+   `min_semantic_similarity`. Loud, easy to detect.
+2. **The model** writes *"the provided excerpts do not contain information
+   about X"* when retrieval passed weak context through. Silent.
+
+`metadata["refused"]` was set only by case 1. Case 2 -- a correct refusal --
+left the flag at `False`, so evaluation scored it as a fabricated answer.
+
+Measured on five hard questions, **all five were refused correctly in prose and
+all five were counted as failures.** The first run of `eval/refusal.py`
+therefore reported "4 of 5 unanswerable questions were answered; the system made
+something up", which was the opposite of what happened.
+
+`src/generation/refusal_detection.py` now reads prose refusals. Detection is
+deliberately narrow:
+
+- A phrase must reference the *sources*. "There is no evidence that X causes Y"
+  is a research finding, not a refusal.
+- A disclaimer followed by a real answer stays an answer, so a genuine partial
+  hallucination is not hidden behind a refusal label.
+- Pronouns count when a source word appears elsewhere: *"The excerpts discuss
+  SuperGLUE. However, **they** do not provide a specific score."*
+
+Citations were also being attached to refusals -- *"the excerpts do not contain
+X. [Llama 3, 2024; GPT-3, 2020]"* cites three papers for a statement that they
+say nothing. Now skipped.
+
+### Refusal, measured through both gates
+
+23 hand-written unanswerable questions against 15 known-answerable ones:
+
+| | First run | After fixes |
+|---|---|---|
+| Unanswerable correctly refused | 21 / 23 (91.3%) | **23 / 23 (100%)** |
+| Answered anyway | 2 | **0** |
+| Answerable wrongly refused | 1 / 15 (6.7%) | 1 / 15 (6.7%) |
+
+Both first-run survivors were examined, and neither was a hallucination:
+
+- One was **not a failure**: the answer correctly separated GLUE (80.5) from
+  SuperGLUE and stated the SuperGLUE score was absent. The detector missed it
+  because the refusal attached to a pronoun -- *"however, **they** do not
+  provide a specific score"*.
+- One was a **badly written test question**. It asked about "the Transformer's
+  24-layer configuration", but BERT-Large in the same corpus *is* a 24-layer
+  transformer with 16 heads, so answering it was correct behaviour. Replaced
+  with a WMT 2022 BLEU question, which cannot appear in a 2017 paper.
+
+**Do not read 100% as "solved".** Three reasons it overstates the system:
+
+1. **n = 23.** One question moves the rate by four points.
+2. **The detector was tuned on this set.** The pronoun pattern was added after
+   watching it miss a specific answer. Fitting a detector to the test set it is
+   scored on inflates the result, and the honest fix is a second question set
+   written without looking at the failures.
+3. **Nine of the questions were written by the same person who wrote the
+   detector.** An independently written set is worth more than a larger one.
+
+What the number does support: every `off_topic` and `unknowable` question was
+caught easily, and the only questions that ever threatened the gate were
+`near_miss` ones built from the corpus's own vocabulary. A question set of
+obvious off-topic questions would have scored 100% from the start and proved
+nothing.
+
+The one persistent false refusal is a real answerable question about the CoLA
+task, scoring 0.436 against a 0.40 floor. It sits close to the boundary, which
+is what a borderline case is supposed to look like.
+
+## Finding #16: the harness scored API failures as successful answers
+
+Two runs of identical code, four minutes apart, disagreed:
+
+| Run | Unanswerable refused | Answerable wrongly refused |
+|---|---|---|
+| 04:13 | 23 / 23 | **1 / 15** |
+| 04:18 | 23 / 23 | **0 / 15** |
+
+Nothing had changed. The CoLA question had hit a Gemini 503 and timed out after
+60 seconds, and `refuses()` handled `LLMError` by returning `False` -- "did not
+refuse", which the harness counted as a successful answer.
+
+The consequence is worse than one flipped row: **a provider outage would have
+driven the false-refusal rate to zero and made the system look perfect.** The
+worse the infrastructure behaved, the better the score would read.
+
+`refuses()` now returns a third state. Errored questions are excluded from both
+denominators and reported separately, and the report prints a warning telling
+the reader to rerun before quoting the rates.
+
+The re-run with error tracking reproduces 23/23 and 1/15 with zero errors, which
+is the number recorded above.
+
+This is the second time in this evaluation that a failure mode was being scored
+as a success -- the first was prose refusals counted as fabrications (finding
+#14). Both were caught only by looking at two results that should have matched
+and did not.
+
+### The threshold stays at 0.40
+
+The sweep favours 0.50 when only the retrieval gate is measured:
+
+| threshold | unanswerable refused | false refusals |
+|---|---|---|
+| 0.40 (shipped) | 34.8% | 0 |
+| 0.50 | 73.9% | 5 |
+| 0.60 | 100.0% | 11 |
+
+But that table describes one gate in isolation. End to end the model gate
+already catches what retrieval passes through, reaching 91.3% at 0.40 with a
+single false refusal. Raising the threshold to 0.50 would cost four more real
+answers to fix a problem that is already handled downstream.
+
+**Tuning a component against a component-level metric would have made the
+system worse.** The number to optimise is the one the user experiences.
+
+## Finding #17: the judge does not agree with a human, so its scores are withdrawn
+
+Every RAGAS number above was an LLM marking another LLM's work. 23 answers were
+then graded by hand -- *"is every claim backed by the sources shown?"* -- and
+compared against the judge.
+
+| | faithfulness |
+|---|---|
+| n | 23 |
+| human said "supported" | 18 / 23 |
+| raw agreement at 0.50 | 65.22% |
+| **Cohen's κ at 0.50** | **−0.195** (worse than chance) |
+| Cohen's κ at best cut-off (0.80) | +0.265 |
+| Spearman ρ | +0.141 |
+| **mean judge score, human said yes** | **0.781** |
+| **mean judge score, human said no** | **0.783** |
+
+Raw agreement of 65% looks respectable and is the trap: 18 of 23 answers were
+"supported", so a judge that said "yes" every time would score 78%. That is why
+κ is reported -- it subtracts the agreement chance alone would produce, and
+here it goes negative.
+
+**The judge barely discriminates.** 13 of the 23 graded answers received
+*exactly* 1.0. A scorer that returns the top mark to more than half its inputs
+cannot separate them, whatever the underlying answers look like.
+
+### Reading the group means honestly
+
+At face value the two group means are identical -- 0.781 versus 0.783 -- which
+would say the judge carries no signal at all. That reading does not survive
+inspection of the five negative grades.
+
+| Rows included | n | negatives | κ | ρ | mean(yes) | mean(no) |
+|---|---|---|---|---|---|---|
+| all grades | 23 | 5 | −0.195 | +0.141 | 0.781 | 0.783 |
+| minus `q023` | 22 | 4 | −0.185 | +0.234 | 0.781 | 0.729 |
+| minus `q023`, `q005` | 21 | 3 | −0.167 | +0.365 | 0.781 | **0.639** |
+
+Two of the five negatives do not hold up:
+
+- **`q023`** -- the answer states that LLMs "can effortlessly manage contexts
+  exceeding 200,000 tokens". The retrieved chunk from the RAG survey reads
+  *"Presently, LLMs can effortlessly manage contexts exceeding 200,000
+  tokens"*. The answer is a near-verbatim quote of its source. **The judge's
+  1.0 was correct and the human grade was not.**
+- **`q005`** -- asks the purpose of "the list C" in some code. The code is an
+  *example prompt* printed inside the InstructGPT paper to compare GPT-3 and
+  InstructGPT completions, not a claim the paper makes. Whether an answer
+  describing that code counts as "supported" is genuinely ambiguous, so the
+  disagreement says more about the question than about either rater.
+
+Remove those two and ρ more than doubles, and the group means separate by 0.14.
+**The judge is weakly informative, not blind** -- which is a materially
+different conclusion from the one the headline numbers suggested.
+
+What does *not* change is κ. It stays between −0.167 and −0.195 no matter which
+single row is dropped. The judge's threshold is simply in the wrong place: it
+marks almost everything as passing.
+
+`answer_relevancy` could not be assessed at all: the human accepted all 23
+answers, leaving no variance to correlate against. That is not a judge failure,
+it is a test-set limitation -- a calibration set needs bad answers in it.
+
+### What this means for every generation number in this document
+
+**Faithfulness 0.8650, answer_relevancy 0.8026, context_precision 0.8711 and
+context_recall 0.9147 cannot be quoted as measurements of quality.** They are
+recorded here because they were run, not because they are trusted.
+
+The retrieval numbers are unaffected -- those come from BEIR's expert labels,
+not from a model.
+
+### Caveats
+
+- **n = 23, with 5 negatives -- of which 3 survive review.** Nothing about a
+  three-item class is stable. Every number in this section should be treated as
+  a direction, not a value.
+- **The rater confirmed they graded attribution, not truth**, which is what
+  faithfulness claims to measure, so the two tests were aligned. The `q023`
+  error was a missed line in the source, not a different standard.
+- **One judge, one corpus.** gpt-4o-mini on 8 papers. Not a general claim about
+  RAGAS.
+
+### What would resolve it
+
+Grade another 30, weighted toward answers the judge scored **low**, so the
+negative class is large enough for κ to mean anything. The current sample was
+drawn evenly across the score range, which is right for an unbiased first look
+but leaves too few negatives to measure agreement on.
+
+### Why the scores stay withdrawn anyway
+
+Even on the most favourable reading -- ρ = +0.365 after removing two contested
+rows -- a judge that hands 1.0 to 13 of 23 answers cannot support a claim like
+"faithfulness 0.8650". The score would be quoting a scale that does not
+discriminate at the top end, where nearly all the mass sits.
+
+**This is what the calibration step is for.** Without it this document would
+have printed faithfulness 0.8650 as a result. With it, the honest statement is
+narrower and more useful: the harness works, the judge is weakly informative and
+badly calibrated, and 23 grades are not enough to say more.
+
 ## Generation scores, final
 
 Generator `gemini/2.5-flash`, judge `openai/gpt-4o-mini`, 43 questions,
@@ -583,9 +872,13 @@ corpus re-indexed with recovered titles.
 | errors | 0 |
 | median latency per question | 3.2 s |
 
-**These numbers are LLM-judged and are not yet calibrated.** RAGAS metrics
-correlate with human judgement at roughly 0.55. Until the agreement figure from
-`eval/calibrate.py` exists, read them as indicative, not as fact.
+**These numbers are recorded, not trusted.** Calibration against 23 hand-graded
+answers returned κ = −0.195 for faithfulness, with the judge scoring 0.781 on
+answers a human called supported and 0.783 on ones a human rejected. See finding
+#17. Do not present any row of this table as a measurement of answer quality.
+
+The citation and latency rows are unaffected -- those are counted in code, not
+judged by a model.
 
 ---
 
@@ -608,9 +901,15 @@ correlate with human judgement at roughly 0.55. Until the agreement figure from
   questions and the reference answers, from the chunks themselves. That makes
   retrieval easier than real use and is the main reason `context_recall` sits
   above 0.91.
-- **Refusal is unmeasured.** `min_semantic_similarity = 0.40` still rests on a
-  handful of probes. The 20 hand-written unanswerable questions are what will
-  turn it into a measured threshold.
+- **Refusal rests on 23 questions.** Enough to show the shape, not enough for a
+  confident rate: one question moves it by four points. Two of the 23 turned
+  out to be badly written tests, which is a fair warning about any hand-built
+  set, including this one.
+- **Twelve findings came from evaluation code, not the system.** Findings 9-15
+  are mostly bugs in the measurement rather than in the pipeline. That ratio is
+  worth stating plainly: an evaluation harness needs the same scrutiny as the
+  thing it measures, and a metric that reads 0.0 or 1.0 on every row is a bug
+  report until proven otherwise.
 
 ## Reproducing
 
@@ -638,6 +937,20 @@ python -m eval.generation_eval \
 `--generator-model` alone does not switch providers; pass
 `--generator-provider` with it or the request goes to the default provider with
 a model name it does not recognise.
+
+Refusal and judge calibration:
+
+```bash
+python -m eval.refusal --template     # starter file for unanswerable questions
+python -m eval.refusal --sweep        # threshold sweep, retrieval gate only
+python -m eval.refusal --provider gemini --model gemini-2.5-flash
+python -m eval.calibrate              # grade 30 answers by hand
+python -m eval.calibrate --report     # agreement stats only
+```
+
+`eval.calibrate` samples answers across the judge's score range rather than
+from the top, so the disagreements are actually present, and saves after every
+verdict so a session can be resumed.
 
 The SciFact index is built once per (chunk size, embedding model) pair into
 `data/eval_chroma/`, kept separate from the application's own collection.
