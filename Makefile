@@ -1,16 +1,26 @@
-.PHONY: help install install-dev run lint format typecheck check corpus clean reset-db \
+.PHONY: help install install-dev run api api-dev serve frontend frontend-dev frontend-install \
+        lint format typecheck check corpus clean reset-db \
         eval eval-quick eval-sweep-weights eval-sweep-rrfk index \
-        eval-testset eval-generation eval-generation-quick eval-generation-agents
+        eval-testset eval-generation eval-generation-quick eval-generation-agents \
+        eval-refusal eval-refusal-sweep eval-calibrate \
+        test test-cov
 
 help:
 	@echo "install      Install runtime dependencies"
 	@echo "install-dev  Install runtime + development dependencies"
 	@echo "run          Launch the Streamlit app"
+	@echo "api          Serve the HTTP API (docs at /docs)"
+	@echo "api-dev      Serve the API with autoreload"
+	@echo "serve        Build the frontend, then serve API + UI on :8000"
+	@echo "frontend     Build the React bundle into static/"
+	@echo "frontend-dev Vite dev server on :5173, proxying to the API"
 	@echo "corpus       Download a small open-access paper corpus into data/raw/"
+	@echo "test         Run the test suite (offline, no API calls)"
+	@echo "test-cov     Run tests with a coverage report"
 	@echo "lint         Run ruff"
 	@echo "format       Format with ruff"
 	@echo "typecheck    Run mypy over src/"
-	@echo "check        lint + typecheck"
+	@echo "check        lint + typecheck + tests"
 	@echo "reset-db     Delete the vector store (re-ingest afterwards)"
 	@echo "clean        Remove caches and build artifacts"
 	@echo ""
@@ -24,6 +34,9 @@ help:
 	@echo "eval-generation         Score answers with RAGAS (single-shot)"
 	@echo "eval-generation-quick   Same, first 10 questions only"
 	@echo "eval-generation-agents  Score the 4-stage multi-agent pipeline"
+	@echo "eval-refusal            Does it decline questions the corpus cannot answer?"
+	@echo "eval-refusal-sweep      Sweep min_semantic_similarity"
+	@echo "eval-calibrate          Grade answers by hand; report judge agreement"
 
 install:
 	pip install -r requirements.txt
@@ -34,20 +47,54 @@ install-dev:
 run:
 	streamlit run app.py
 
+# Models load during startup, not on the first request, so the first query is
+# not several seconds slower than the rest.
+api:
+	uvicorn api.main:app --host 0.0.0.0 --port 8000
+
+api-dev:
+	uvicorn api.main:app --reload --port 8000
+
+# --- Frontend --------------------------------------------------------------
+# The build lands in static/, which the API mounts. One process serves both, so
+# there is no CORS configuration anywhere.
+frontend-install:
+	cd frontend && npm install
+
+frontend:
+	cd frontend && npm run build
+
+# Vite on :5173 proxying /api to :8000. Only for development -- in production
+# the frontend is same-origin and there is no proxy.
+frontend-dev:
+	cd frontend && npm run dev
+
+# Build the UI, then serve everything from one process at :8000.
+serve: frontend
+	uvicorn api.main:app --host 0.0.0.0 --port 8000
+
 corpus:
 	python scripts/fetch_corpus.py
 
 lint:
-	ruff check src app.py scripts eval
+	ruff check src app.py scripts eval test api
 
 format:
-	ruff format src app.py scripts eval
-	ruff check --fix src app.py scripts eval
+	ruff format src app.py scripts eval test api
+	ruff check --fix src app.py scripts eval test api
 
 typecheck:
-	mypy src eval
+	mypy src eval api
 
-check: lint typecheck
+# No test touches a real API: LLM clients are stubbed and the retry policy's
+# sleeps are patched, so this stays fast and runs offline.
+test:
+	pytest test
+
+test-cov:
+	pytest test --cov --cov-report=term-missing
+
+check: lint typecheck test
 
 # Reranking dominates runtime (cross-encoder on CPU), so the quick target
 # omits it. Quote full-run numbers, not quick-run ones.
@@ -80,6 +127,21 @@ eval-generation-quick:
 # Compares the 4-stage agent pipeline against single-shot generation.
 eval-generation-agents:
 	python -m eval.generation_eval --multi-agent
+
+# --- Refusal and judge calibration ----------------------------------------
+# Refusal is measured through both gates: retrieval raises, and the model
+# declines in prose. Measuring only the first scores correct refusals as
+# fabrications -- see finding #14.
+eval-refusal:
+	python -m eval.refusal
+
+eval-refusal-sweep:
+	python -m eval.refusal --sweep
+
+# Grade answers by hand, then report Cohen's kappa against the LLM judge.
+# Every RAGAS number is meaningless without this.
+eval-calibrate:
+	python -m eval.calibrate
 
 index:
 	python scripts/index_papers.py --skip Panipat.pdf test_paper.pdf

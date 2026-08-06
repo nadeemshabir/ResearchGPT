@@ -36,5 +36,15 @@ groq>=0.4.1
 openai>=1.40
 google-generativeai>=0.8
 
+# --- HTTP API -------------------------------------------------------------
+# fastapi and uvicorn already arrive transitively via chromadb, but the API
+# depends on them directly and an undeclared dependency breaks the moment the
+# transitive one is dropped.
+fastapi>=0.110
+uvicorn[standard]>=0.27
+# Required by FastAPI to parse multipart uploads. Without it, POST /papers
+# fails at request time with a RuntimeError rather than at import.
+python-multipart>=0.0.9
+
 # --- UI -------------------------------------------------------------------
 streamlit>=1.29
