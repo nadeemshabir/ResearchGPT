@@ -158,7 +158,7 @@ def test_sections_are_detected_from_headings(chunker: TextChunker) -> None:
 def test_leading_section_numbers_are_stripped_from_titles(
     chunker: TextChunker,
 ) -> None:
-    """"1. Introduction" and "Introduction" must produce the same title.
+    """ "1. Introduction" and "Introduction" must produce the same title.
 
     Otherwise the same section in two papers gets two different labels and
     section-based filtering splits on formatting rather than meaning.
@@ -173,9 +173,7 @@ def test_leading_section_numbers_are_stripped_from_titles(
     "line",
     ["Introduction", "1. Introduction", "1 Introduction", "IV. Introduction", "Introduction:"],
 )
-def test_heading_variants_normalise_to_one_title(
-    chunker: TextChunker, line: str
-) -> None:
+def test_heading_variants_normalise_to_one_title(chunker: TextChunker, line: str) -> None:
     assert chunker._match_heading(line) == "Introduction"
 
 
@@ -190,7 +188,7 @@ def test_text_before_the_first_heading_is_kept(chunker: TextChunker) -> None:
 def test_prose_starting_with_a_heading_word_is_not_a_heading(
     chunker: TextChunker,
 ) -> None:
-    """"Results were mixed across all twelve..." is a sentence, not a section."""
+    """ "Results were mixed across all twelve..." is a sentence, not a section."""
     long_line = (
         "Results from the experiments were mixed across all twelve benchmarks "
         "that we evaluated during the study."

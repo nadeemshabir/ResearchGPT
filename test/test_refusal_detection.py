@@ -39,9 +39,7 @@ def test_detects_no_information_phrasing() -> None:
 
 
 def test_detects_cannot_answer_phrasing() -> None:
-    assert looks_like_refusal(
-        "I cannot determine the answer from the provided excerpts."
-    )
+    assert looks_like_refusal("I cannot determine the answer from the provided excerpts.")
 
 
 def test_detects_the_harness_marker() -> None:
@@ -77,7 +75,7 @@ def test_a_real_answer_is_not_a_refusal() -> None:
 
 
 def test_a_scientific_negative_finding_is_not_a_refusal() -> None:
-    """"No evidence that X causes Y" is a result, not a refusal.
+    """ "No evidence that X causes Y" is a result, not a refusal.
 
     This is why every pattern requires a source word: without it, papers
     reporting null results would be misread as declining to answer.

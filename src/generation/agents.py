@@ -66,9 +66,7 @@ class AnalyzerAgent(BaseAgent):
             if not text.strip():
                 continue
 
-            prompt = PromptTemplates.build_extraction_prompt(
-                text=text, extract_type="key_findings"
-            )
+            prompt = PromptTemplates.build_extraction_prompt(text=text, extract_type="key_findings")
             try:
                 content = self._generate(prompt)
             except LLMAuthenticationError:
@@ -111,9 +109,7 @@ class SynthesizerAgent(BaseAgent):
                 "error": "no extractions to synthesise",
             }
 
-        prompt = PromptTemplates.build_synthesis_prompt(
-            question=query, extractions=extractions
-        )
+        prompt = PromptTemplates.build_synthesis_prompt(question=query, extractions=extractions)
         answer = self._generate(prompt)
 
         logger.info("Synthesised answer (%d chars)", len(answer))
@@ -258,9 +254,7 @@ class AgentOrchestrator:
         answer = synthesis["answer"]
 
         if use_citations:
-            citation_result = self.citation.process(
-                {"answer": answer, "extractions": extractions}
-            )
+            citation_result = self.citation.process({"answer": answer, "extractions": extractions})
             answer = citation_result.get("cited_answer") or answer
             stages.append("cite")
 

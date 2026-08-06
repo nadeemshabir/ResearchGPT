@@ -45,9 +45,7 @@ class RetrievalSystem:
             database: Shared vector store.
         """
         settings = get_settings()
-        self.use_reranking = (
-            use_reranking if use_reranking is not None else settings.use_reranking
-        )
+        self.use_reranking = use_reranking if use_reranking is not None else settings.use_reranking
         self.use_query_processing = (
             use_query_processing
             if use_query_processing is not None
@@ -104,9 +102,7 @@ class RetrievalSystem:
         settings = get_settings()
         top_k = top_k or settings.top_k_rerank
         candidate_k = candidate_k or settings.top_k_retrieve
-        process_query = (
-            process_query if process_query is not None else self.use_query_processing
-        )
+        process_query = process_query if process_query is not None else self.use_query_processing
         rerank = rerank if rerank is not None else self.use_reranking
 
         metadata: dict[str, Any] = {
@@ -202,9 +198,7 @@ class RetrievalSystem:
 
         if min_score is None:
             min_score = (
-                settings.min_rerank_score
-                if self.use_reranking
-                else settings.min_hybrid_score
+                settings.min_rerank_score if self.use_reranking else settings.min_hybrid_score
             )
 
         search_result = self.search(query, top_k=top_k or settings.top_k_rerank)
@@ -259,9 +253,7 @@ class RetrievalSystem:
         for result in relevant:
             # Fall back to a 4-chars-per-token estimate when the stored count
             # is missing (older rows predate the metadata field).
-            chunk_tokens = result["metadata"].get("num_tokens") or max(
-                1, len(result["text"]) // 4
-            )
+            chunk_tokens = result["metadata"].get("num_tokens") or max(1, len(result["text"]) // 4)
             if total_tokens + chunk_tokens > max_tokens:
                 continue
             selected.append(result)
@@ -334,15 +326,11 @@ class RetrievalSystem:
         final: list[dict[str, Any]] = []
         for entry in merged.values():
             result = entry["result"]
-            result["multi_query_score"] = round(
-                sum(entry["scores"]) / len(entry["scores"]), 4
-            )
+            result["multi_query_score"] = round(sum(entry["scores"]) / len(entry["scores"]), 4)
             result["found_in_variations"] = len(entry["scores"])
             final.append(result)
 
-        final.sort(
-            key=lambda r: (r["found_in_variations"], r["multi_query_score"]), reverse=True
-        )
+        final.sort(key=lambda r: (r["found_in_variations"], r["multi_query_score"]), reverse=True)
         final = final[:top_k]
         for rank, result in enumerate(final, 1):
             result["rank"] = rank

@@ -217,7 +217,7 @@ def test_year_is_recovered_from_the_paper_id() -> None:
 
 
 def test_audit_counts_every_source_in_a_merged_group() -> None:
-    """"[A, 2017; B, 2012]" cites two papers, not one.
+    """ "[A, 2017; B, 2012]" cites two papers, not one.
 
     Splitting only on "," saw the first title and reported coverage 0.5 on
     answers that had in fact cited everything retrieved.

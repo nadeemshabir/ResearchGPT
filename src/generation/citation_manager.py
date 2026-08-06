@@ -266,9 +266,7 @@ class CitationManager:
             merged = new
         return merged
 
-    def add_citations_to_text(
-        self, text: str, sources: list[dict[str, Any]]
-    ) -> str:
+    def add_citations_to_text(self, text: str, sources: list[dict[str, Any]]) -> str:
         """Append one citation per sentence, in source order.
 
         This is a positional fallback used when no LLM is available. It assumes
@@ -329,9 +327,7 @@ class CitationManager:
             return []
 
         settings = get_settings()
-        floor = (
-            min_similarity if min_similarity is not None else settings.citation_min_similarity
-        )
+        floor = min_similarity if min_similarity is not None else settings.citation_min_similarity
         cap = (
             max_per_paragraph
             if max_per_paragraph is not None
@@ -352,9 +348,7 @@ class CitationManager:
             if not body.strip():
                 continue
             if _is_structural(body):
-                attributions.append(
-                    ParagraphAttribution(text=body, sources=[], structural=True)
-                )
+                attributions.append(ParagraphAttribution(text=body, sources=[], structural=True))
                 continue
 
             words = _content_words(body)
@@ -419,9 +413,7 @@ class CitationManager:
             return text
 
         rendered: list[str] = []
-        for paragraph in self.attribute_paragraphs(
-            text, chunks, min_similarity, max_per_paragraph
-        ):
+        for paragraph in self.attribute_paragraphs(text, chunks, min_similarity, max_per_paragraph):
             if not paragraph.sources:
                 rendered.append(paragraph.text)
                 continue
@@ -459,9 +451,7 @@ class CitationManager:
                 lines.append(f"- {author} ({year}). {title}.")
         return "\n".join(lines)
 
-    def validate_citations(
-        self, text: str, sources: list[dict[str, Any]]
-    ) -> dict[str, Any]:
+    def validate_citations(self, text: str, sources: list[dict[str, Any]]) -> dict[str, Any]:
         """Audit which supplied sources the text actually cites.
 
         Only two patterns are applied: the header format models copy from the
@@ -492,16 +482,12 @@ class CitationManager:
             for part in citation.split(";"):
                 # "[Title, 2017]" carries a year to strip; "[Source 1: Title]"
                 # does not, and a bare "[1]" carries no title at all.
-                title = (
-                    part.split(",")[0] if "," in part else part
-                ).strip("[]() ").lower()
+                title = (part.split(",")[0] if "," in part else part).strip("[]() ").lower()
                 if title and not title.isdigit():
                     cited_titles.add(title)
 
         available = {
-            str(source.get("title", "")).lower()
-            for source in sources
-            if source.get("title")
+            str(source.get("title", "")).lower() for source in sources if source.get("title")
         }
 
         return {

@@ -57,9 +57,7 @@ def load_aliases(directory: Path) -> dict[str, str]:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--dir", type=Path, default=PROJECT_ROOT / "data" / "raw")
-    parser.add_argument(
-        "--skip", nargs="*", default=[], help="Filenames to exclude (exact match)"
-    )
+    parser.add_argument("--skip", nargs="*", default=[], help="Filenames to exclude (exact match)")
     parser.add_argument("--dry-run", action="store_true", help="List files, index nothing")
     parser.add_argument("--reset", action="store_true", help="Clear the store first")
     args = parser.parse_args()

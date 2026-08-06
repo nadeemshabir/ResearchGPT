@@ -277,9 +277,7 @@ def test_an_llm_outage_is_a_502(client: Any, stubs: dict[str, Any]) -> None:
     assert response.json()["error"] == "llm_unavailable"
 
 
-def test_multi_agent_uses_a_separate_generator(
-    client: Any, stubs: dict[str, Any]
-) -> None:
+def test_multi_agent_uses_a_separate_generator(client: Any, stubs: dict[str, Any]) -> None:
     """Mutating one shared generator would leak the mode into the next request."""
     client.post("/query", json={"question": "q1", "multi_agent": True})
     client.post("/query", json={"question": "q2", "multi_agent": False})
@@ -349,18 +347,14 @@ def test_upload_accepts_a_pdf_and_returns_a_job(client: Any) -> None:
     assert response.json()["paper_id"] == "paper"
 
 
-def test_upload_runs_ingestion_in_the_background(
-    client: Any, stubs: dict[str, Any]
-) -> None:
+def test_upload_runs_ingestion_in_the_background(client: Any, stubs: dict[str, Any]) -> None:
     """TestClient runs background tasks before returning, so this is observable."""
     client.post("/papers", files={"file": ("paper.pdf", b"%PDF-1.4 fake", "application/pdf")})
 
     assert stubs["pipeline"].processed == ["paper"]
 
 
-def test_a_successful_job_records_its_statistics(
-    client: Any, stubs: dict[str, Any]
-) -> None:
+def test_a_successful_job_records_its_statistics(client: Any, stubs: dict[str, Any]) -> None:
     job_id = client.post(
         "/papers", files={"file": ("paper.pdf", b"%PDF-1.4 fake", "application/pdf")}
     ).json()["job_id"]
@@ -371,9 +365,7 @@ def test_a_successful_job_records_its_statistics(
     assert body["num_chunks"] == 12
 
 
-def test_a_failed_ingestion_is_recorded_not_raised(
-    client: Any, stubs: dict[str, Any]
-) -> None:
+def test_a_failed_ingestion_is_recorded_not_raised(client: Any, stubs: dict[str, Any]) -> None:
     """A background task has no caller, so a swallowed error would be invisible."""
     from src.exceptions import EncryptedPDFError
 
@@ -398,17 +390,13 @@ def test_a_custom_paper_id_is_honoured(client: Any, stubs: dict[str, Any]) -> No
 
 
 def test_a_non_pdf_upload_is_rejected(client: Any) -> None:
-    response = client.post(
-        "/papers", files={"file": ("notes.txt", b"hello", "text/plain")}
-    )
+    response = client.post("/papers", files={"file": ("notes.txt", b"hello", "text/plain")})
 
     assert response.status_code == 415
 
 
 def test_an_empty_upload_is_rejected(client: Any) -> None:
-    response = client.post(
-        "/papers", files={"file": ("empty.pdf", b"", "application/pdf")}
-    )
+    response = client.post("/papers", files={"file": ("empty.pdf", b"", "application/pdf")})
 
     assert response.status_code == 422
 
@@ -419,9 +407,7 @@ def test_an_oversized_upload_is_rejected(client: Any) -> None:
 
     oversized = b"x" * (int(get_settings().max_pdf_size_mb * 1024 * 1024) + 1024)
 
-    response = client.post(
-        "/papers", files={"file": ("huge.pdf", oversized, "application/pdf")}
-    )
+    response = client.post("/papers", files={"file": ("huge.pdf", oversized, "application/pdf")})
 
     assert response.status_code == 413
 
@@ -458,9 +444,7 @@ def test_health_is_degraded_not_unhealthy_on_an_empty_corpus(
     assert client.get("/health").json()["status"] == "degraded"
 
 
-def test_health_is_unhealthy_when_the_store_fails(
-    client: Any, stubs: dict[str, Any]
-) -> None:
+def test_health_is_unhealthy_when_the_store_fails(client: Any, stubs: dict[str, Any]) -> None:
     def boom() -> dict[str, Any]:
         raise RuntimeError("chroma is unreachable")
 

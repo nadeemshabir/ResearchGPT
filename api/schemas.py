@@ -158,9 +158,7 @@ class IngestionJob(BaseModel):
     state: JobState
     filename: str
     paper_id: str | None = None
-    detail: str | None = Field(
-        default=None, description="Error message when the state is failed."
-    )
+    detail: str | None = Field(default=None, description="Error message when the state is failed.")
     num_chunks: int | None = None
     num_sections: int | None = None
     num_pages: int | None = None

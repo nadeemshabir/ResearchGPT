@@ -34,17 +34,40 @@ logger = get_logger(__name__)
 #: Terms suggesting the user wants exact lexical matching.
 _TECHNICAL_TERMS = frozenset(
     {
-        "algorithm", "model", "equation", "function", "method", "architecture",
-        "training", "optimization", "optimisation", "loss", "accuracy",
-        "precision", "recall", "parameter", "benchmark", "dataset",
+        "algorithm",
+        "model",
+        "equation",
+        "function",
+        "method",
+        "architecture",
+        "training",
+        "optimization",
+        "optimisation",
+        "loss",
+        "accuracy",
+        "precision",
+        "recall",
+        "parameter",
+        "benchmark",
+        "dataset",
     }
 )
 
 #: Terms suggesting the user wants meaning-based matching.
 _CONCEPTUAL_TERMS = frozenset(
     {
-        "what", "why", "how", "explain", "describe", "compare", "difference",
-        "relationship", "concept", "idea", "intuition", "motivation",
+        "what",
+        "why",
+        "how",
+        "explain",
+        "describe",
+        "compare",
+        "difference",
+        "relationship",
+        "concept",
+        "idea",
+        "intuition",
+        "motivation",
     }
 )
 
@@ -103,11 +126,12 @@ class HybridSearcher:
         semantic_weight = (
             semantic_weight if semantic_weight is not None else settings.semantic_weight
         )
-        keyword_weight = (
-            keyword_weight if keyword_weight is not None else settings.keyword_weight
-        )
+        keyword_weight = keyword_weight if keyword_weight is not None else settings.keyword_weight
 
-        for name, value in (("semantic_weight", semantic_weight), ("keyword_weight", keyword_weight)):
+        for name, value in (
+            ("semantic_weight", semantic_weight),
+            ("keyword_weight", keyword_weight),
+        ):
             if not 0.0 <= value <= 1.0:
                 raise ValueError(f"{name} must be between 0 and 1, got {value}")
 
@@ -216,11 +240,17 @@ class HybridSearcher:
         """Merge the two result sets on chunk id, using the configured strategy."""
         if self.fusion == "rrf":
             return self._combine_rrf(
-                semantic_results, keyword_results, semantic_weight, keyword_weight,
+                semantic_results,
+                keyword_results,
+                semantic_weight,
+                keyword_weight,
                 return_components,
             )
         return self._combine_weighted(
-            semantic_results, keyword_results, semantic_weight, keyword_weight,
+            semantic_results,
+            keyword_results,
+            semantic_weight,
+            keyword_weight,
             return_components,
         )
 
@@ -316,8 +346,7 @@ class HybridSearcher:
         for entry in combined.values():
             result = entry["result"]
             result["hybrid_score"] = round(
-                entry["semantic_score"] * semantic_weight
-                + entry["keyword_score"] * keyword_weight,
+                entry["semantic_score"] * semantic_weight + entry["keyword_score"] * keyword_weight,
                 6,
             )
             if return_components:
@@ -365,9 +394,7 @@ class HybridSearcher:
         else:
             weights = (0.6, 0.4)
 
-        logger.debug(
-            "Adaptive weights for %r: semantic=%.2f keyword=%.2f", query[:60], *weights
-        )
+        logger.debug("Adaptive weights for %r: semantic=%.2f keyword=%.2f", query[:60], *weights)
         results = self.search(query, top_k=top_k, weights=weights)
         for result in results:
             result["adaptive_weights"] = {"semantic": weights[0], "keyword": weights[1]}

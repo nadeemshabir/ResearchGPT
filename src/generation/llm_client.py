@@ -26,9 +26,31 @@ logger = get_logger(__name__)
 
 #: Substrings identifying each failure class in provider error messages. SDKs
 #: differ in exception types but converge on this vocabulary.
-_AUTH_MARKERS = ("api key", "unauthorized", "authentication", "invalid_api_key", "permission denied", "forbidden", "401", "403")
-_RATE_LIMIT_MARKERS = ("rate limit", "rate_limit", "too many requests", "quota", "429", "resource_exhausted")
-_TIMEOUT_MARKERS = ("timeout", "timed out", "deadline exceeded", "connection reset", "connection aborted")
+_AUTH_MARKERS = (
+    "api key",
+    "unauthorized",
+    "authentication",
+    "invalid_api_key",
+    "permission denied",
+    "forbidden",
+    "401",
+    "403",
+)
+_RATE_LIMIT_MARKERS = (
+    "rate limit",
+    "rate_limit",
+    "too many requests",
+    "quota",
+    "429",
+    "resource_exhausted",
+)
+_TIMEOUT_MARKERS = (
+    "timeout",
+    "timed out",
+    "deadline exceeded",
+    "connection reset",
+    "connection aborted",
+)
 
 
 class LLMClient:
@@ -61,14 +83,11 @@ class LLMClient:
 
         if self.provider not in DEFAULT_MODELS:
             raise ConfigurationError(
-                f"Unsupported provider {self.provider!r}. "
-                f"Expected one of {sorted(DEFAULT_MODELS)}."
+                f"Unsupported provider {self.provider!r}. Expected one of {sorted(DEFAULT_MODELS)}."
             )
 
         self.model = model or settings.llm_model or DEFAULT_MODELS[self.provider]
-        self.temperature = (
-            temperature if temperature is not None else settings.llm_temperature
-        )
+        self.temperature = temperature if temperature is not None else settings.llm_temperature
         self.max_tokens = max_tokens or settings.llm_max_tokens
         self.timeout = settings.llm_timeout_seconds
         self._max_retries = settings.llm_max_retries
@@ -206,9 +225,7 @@ class LLMClient:
             max_tokens or self.max_tokens,
         )
 
-    def _complete(
-        self, messages: list[dict[str, str]], temperature: float, max_tokens: int
-    ) -> str:
+    def _complete(self, messages: list[dict[str, str]], temperature: float, max_tokens: int) -> str:
         """Dispatch to the provider, with retries on transient failures."""
 
         def attempt() -> str:

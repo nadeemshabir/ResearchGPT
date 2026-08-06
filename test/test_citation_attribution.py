@@ -102,8 +102,7 @@ def test_structural_paragraphs_are_marked_and_kept() -> None:
     """Kept in the list so the answer can be rebuilt in order from it alone."""
     manager = CitationManager()
     answer = (
-        "## Summary\n\n"
-        "The Transformer replaces recurrence with multi-head self-attention entirely."
+        "## Summary\n\nThe Transformer replaces recurrence with multi-head self-attention entirely."
     )
 
     paragraphs = manager.attribute_paragraphs(answer, [ATTENTION])
@@ -209,7 +208,7 @@ def test_one_paper_across_two_chunks_is_attributed_once() -> None:
 
 
 def test_the_section_is_carried_through() -> None:
-    """"According to the Model Architecture section" is only possible with this."""
+    """ "According to the Model Architecture section" is only possible with this."""
     manager = CitationManager()
     answer = "The Transformer replaces recurrence with multi-head self-attention."
 

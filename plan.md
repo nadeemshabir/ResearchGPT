@@ -494,7 +494,48 @@ Pydantic request/response models throughout. **Stream the answer** — your mult
 
 Make ingestion async with a background worker so upload doesn't block. Then refactor `app.py` to call the API rather than importing `src/` directly — that separation is itself the architectural point.
 
-### 3.3 — Docker + CI
+### 3.3 — Docker + CI ✅ DONE
+
+Multi-stage `Dockerfile` (node build → python runtime) plus
+`.github/workflows/ci.yml` with three jobs: Python checks, frontend build, and
+a Docker build that boots the container and asserts `/health` reports `ok` with
+8 papers.
+
+Decisions worth defending:
+
+- **The corpus is indexed at build time.** `fetch_corpus.py` downloads the eight
+  papers and `index_papers.py` embeds them, so the vector store ships inside the
+  image. A Hugging Face Space has an ephemeral filesystem; a disk-backed
+  ChromaDB would lose all 441 chunks on every restart. Baking it in deletes the
+  problem rather than solving it with a database. The PDFs are then removed —
+  ~28MB that the index no longer needs.
+- **CPU-only torch, installed explicitly first.** The default wheels drag in
+  ~2.5GB of CUDA that no CPU Space can use.
+- **The embedding model is baked in.** Downloading at boot adds ~90s to a cold
+  start and makes startup depend on huggingface.co being up.
+- **The build fails if fewer than 8 papers index.** An image that quietly serves
+  a smaller corpus than the evaluation measured is worse than a failed build.
+- **One uvicorn worker.** Job state in `api/jobs.py` is per-process, so a second
+  worker would let a client poll the one that does not hold its job.
+- **No `docker-compose.yml`.** A Space is one container; a compose file for
+  API + Streamlit + Chroma would describe a deployment that never happens.
+
+Two problems fixed on the way:
+
+- **`fetch_corpus.py` downloaded the wrong papers.** Its list was stale — RoBERTa,
+  DistilBERT, ALBERT, DPR — and only three of eight overlapped with what is
+  actually indexed. A Docker build using it would have shipped a demo answering
+  from a different corpus than `docs/EVALUATION.md` describes. The list now
+  matches, filenames are the paper ids so no alias file is needed, and a failed
+  download raises instead of warning.
+- **`ruff format` had never been run.** CI checks it, so 40 files were
+  reformatted rather than shipping a check that fails on the first run.
+
+`app.py` and Streamlit are gone. The React frontend replaced them, and the
+dependency, Makefile target, lint exemption and docs references went with it.
+
+#### Original notes
+
 
 - `Dockerfile` — multi-stage, non-root user, pinned base image. Pre-download the embedding model into the image so cold start isn't 90 seconds. **Runs ingestion at build time** so the corpus ships inside the image (see 3.5).
 - **No `docker-compose.yml`.** A Hugging Face Space is one container, so a compose file describing API + Streamlit + Chroma would describe a deployment that never happens. Streamlit is being removed and Chroma is embedded, not a service.

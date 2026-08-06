@@ -33,14 +33,15 @@ query ──▶ process ──▶ ┌── dense (cosine) ─┤
 | `src/ingestion/` | PDF parsing, chunking, embedding, vector storage. |
 | `src/retrieval/` | Dense search, BM25, fusion, reranking, query processing. |
 | `src/generation/` | LLM client, prompts, multi-agent pipeline, routing, citations. |
-| `app.py` | Streamlit UI. The only module that formats output for humans. |
+| `api/` | FastAPI app. Serves the JSON API and the built React bundle from one process. |
+| `frontend/` | React + Vite UI, built into `static/`. The only code that formats output for humans. |
 | `scripts/` | Operational CLIs (corpus download, store reset). |
 
 Two rules keep this honest:
 
-1. **Nothing under `src/` writes to stdout.** Library code logs; presentation
-   code prints. `ruff` enforces this with the `T20` rule, with `app.py` and
-   `scripts/` exempted.
+1. **Nothing under `src/` or `api/` writes to stdout.** Library code logs; CLIs
+   print. `ruff` enforces this with the `T20` rule, with `scripts/` and `eval/`
+   exempted.
 2. **Nothing under `src/` reads a constant from anywhere but `src/config.py`.**
    This exists so Milestone 2 can sweep chunk size, retrieval weights, and
    top-k from one place. Parameters scattered across constructor defaults
@@ -185,7 +186,7 @@ A same-dimension model swap warns rather than fails, since it is recoverable.
 
 It is an in-memory snapshot built from the vector store. Papers ingested after
 construction were previously invisible to keyword search for the life of the
-process — which, in the Streamlit app, meant every paper the user uploaded.
+process — which meant every paper a user uploaded during a session.
 `KeywordSearcher.search` now checks the collection count and rebuilds when it
 changes.
 

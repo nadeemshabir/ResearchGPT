@@ -32,9 +32,7 @@ def corpus_pdfs() -> list[Path]:
     return [p for p in sorted(RAW.glob("*.pdf")) if p.name not in NOT_PAPERS]
 
 
-pytestmark = pytest.mark.skipif(
-    not corpus_pdfs(), reason="no corpus in data/raw; nothing to check"
-)
+pytestmark = pytest.mark.skipif(not corpus_pdfs(), reason="no corpus in data/raw; nothing to check")
 
 
 @pytest.fixture(scope="module")

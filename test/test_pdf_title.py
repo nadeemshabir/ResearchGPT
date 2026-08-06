@@ -27,7 +27,7 @@ def test_skips_arxiv_stamp_and_joins_a_wrapped_title() -> None:
 
 
 def test_short_continuation_line_is_not_mistaken_for_authors() -> None:
-    """"Reinforcement Learning" has no function words but is still the title.
+    """ "Reinforcement Learning" has no function words but is still the title.
 
     An earlier heuristic treated any line without function words as the author
     block, which truncated this title at "...in LLMs via".

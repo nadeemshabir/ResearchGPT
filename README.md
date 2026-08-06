@@ -123,9 +123,13 @@ src/
   ingestion/         PDF parsing, chunking, embedding, vector store
   retrieval/         dense, BM25, fusion, reranking, query processing
   generation/        LLM client, prompts, agents, routing, citations
-app.py               Streamlit UI
-scripts/             corpus download, store reset
-docs/ARCHITECTURE.md design decisions and trade-offs
+api/                 FastAPI app, schemas, background jobs
+frontend/            React + Vite UI, built into static/ and served by the API
+test/                297 tests, all offline
+eval/                BEIR harness, RAGAS, refusal, judge calibration
+scripts/             corpus download, indexing, store reset
+Dockerfile           multi-stage build; indexes the corpus at build time
+docs/                ARCHITECTURE.md, API.md, EVALUATION.md
 plan.md              roadmap
 ```
 
@@ -135,25 +139,33 @@ plan.md              roadmap
 
 ```bash
 make install-dev    # runtime + dev dependencies
-make lint           # ruff
-make typecheck      # mypy
-make check          # both
-make reset-db       # wipe the vector store (needed after changing the embedding model)
+make frontend-install
+make serve          # build the UI, serve API + UI on :8000
+
+make test           # 297 tests, offline, ~40s
+make check          # lint + typecheck + tests
+make docker         # build the image (fetches and indexes the corpus)
 ```
 
-Two conventions hold throughout `src/`:
+Three conventions hold throughout `src/`:
 
-1. Library code **logs**; it never prints. Presentation code (`app.py`,
-   `scripts/`) prints. `ruff`'s `T20` rule enforces this.
+1. Library code **logs**; it never prints. Entry points (`scripts/`, `eval/`)
+   print. `ruff`'s `T20` rule enforces this.
 2. Constants live in `src/config.py` and nowhere else, so evaluation sweeps can
    vary them from a single place.
+3. No test calls a real provider. Clients are stubbed and the retry policy's
+   sleeps are patched, so the suite runs offline with no API keys.
 
 ---
 
 ## Tech stack
 
-Streamlit · ChromaDB · sentence-transformers · rank-bm25 · PyMuPDF ·
-tiktoken · pydantic-settings · Groq / OpenAI / Gemini
+FastAPI · React + Vite · ChromaDB · sentence-transformers · rank-bm25 ·
+PyMuPDF · tiktoken · pydantic-settings · KaTeX · Groq / OpenAI / Gemini
+
+The UI was Streamlit until Milestone 3. It was replaced because it capped how
+the interface could look and could not express the thing this project is built
+around: clicking a claim to see the passage behind it.
 
 ---
 

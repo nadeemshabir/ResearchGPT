@@ -1,4 +1,5 @@
-.PHONY: help install install-dev run api api-dev serve frontend frontend-dev frontend-install \
+﻿.PHONY: help install install-dev api api-dev serve frontend frontend-dev frontend-install \
+        docker docker-run \
         lint format typecheck check corpus clean reset-db \
         eval eval-quick eval-sweep-weights eval-sweep-rrfk index \
         eval-testset eval-generation eval-generation-quick eval-generation-agents \
@@ -8,13 +9,14 @@
 help:
 	@echo "install      Install runtime dependencies"
 	@echo "install-dev  Install runtime + development dependencies"
-	@echo "run          Launch the Streamlit app"
 	@echo "api          Serve the HTTP API (docs at /docs)"
 	@echo "api-dev      Serve the API with autoreload"
 	@echo "serve        Build the frontend, then serve API + UI on :8000"
 	@echo "frontend     Build the React bundle into static/"
 	@echo "frontend-dev Vite dev server on :5173, proxying to the API"
-	@echo "corpus       Download a small open-access paper corpus into data/raw/"
+	@echo "corpus       Download the 8-paper demo corpus into data/raw/"
+	@echo "docker       Build the image (fetches + indexes the corpus)"
+	@echo "docker-run   Run the image on :7860"
 	@echo "test         Run the test suite (offline, no API calls)"
 	@echo "test-cov     Run tests with a coverage report"
 	@echo "lint         Run ruff"
@@ -43,9 +45,6 @@ install:
 
 install-dev:
 	pip install -r requirements.txt -r requirements-dev.txt
-
-run:
-	streamlit run app.py
 
 # Models load during startup, not on the first request, so the first query is
 # not several seconds slower than the rest.
@@ -76,12 +75,22 @@ serve: frontend
 corpus:
 	python scripts/fetch_corpus.py
 
+# --- Docker ----------------------------------------------------------------
+# The build fetches and indexes the corpus, so the vector store ships inside
+# the image. Expect ~10 minutes cold: torch, the embedding model, 28MB of PDFs,
+# and the embedding pass over every chunk.
+docker:
+	docker build -t researchgpt .
+
+docker-run:
+	docker run --rm -p 7860:7860 --env-file .env researchgpt
+
 lint:
-	ruff check src app.py scripts eval test api
+	ruff check src scripts eval test api
 
 format:
-	ruff format src app.py scripts eval test api
-	ruff check --fix src app.py scripts eval test api
+	ruff format src scripts eval test api
+	ruff check --fix src scripts eval test api
 
 typecheck:
 	mypy src eval api

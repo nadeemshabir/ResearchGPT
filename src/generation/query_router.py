@@ -77,7 +77,8 @@ ROUTE_THRESHOLDS: dict[QueryType, float] = {
 }
 
 _COMPARISON_PATTERNS = tuple(
-    re.compile(p) for p in (
+    re.compile(p)
+    for p in (
         r"\b(compare|comparison|versus|vs\.?)\b",
         r"\b(difference|differ|different)\b.*\b(between|from)\b",
         r"\b(similar|similarity)\b.*\b(to|with)\b",
@@ -87,7 +88,8 @@ _COMPARISON_PATTERNS = tuple(
 )
 
 _REVIEW_PATTERNS = tuple(
-    re.compile(p) for p in (
+    re.compile(p)
+    for p in (
         r"\b(review|overview|survey)\b",
         # "all" is what makes this multi-document. "Summarize the main
         # findings" is a single summary and belongs to _SUMMARY_PATTERNS;
@@ -103,7 +105,8 @@ _REVIEW_PATTERNS = tuple(
 )
 
 _EXTRACTION_PATTERNS = tuple(
-    re.compile(p) for p in (
+    re.compile(p)
+    for p in (
         r"\bextract\b",
         r"\blist (all|the)\b",
         r"\bfind (all|the)\b.*\b(methods|techniques|approaches)\b",
@@ -114,7 +117,8 @@ _EXTRACTION_PATTERNS = tuple(
 )
 
 _DEFINITION_PATTERNS = tuple(
-    re.compile(p) for p in (
+    re.compile(p)
+    for p in (
         r"^\s*what (is|are)\b",
         r"^\s*define\b",
         r"^\s*definition of\b",
@@ -124,7 +128,8 @@ _DEFINITION_PATTERNS = tuple(
 )
 
 _SUMMARY_PATTERNS = tuple(
-    re.compile(p) for p in (
+    re.compile(p)
+    for p in (
         r"\bsummarize\b",
         r"\bsummarise\b",
         r"\bsummary of\b",
@@ -149,13 +154,34 @@ _EXTRACTION_PATTERN_WEIGHT = 0.7
 _SUMMARY_PATTERN_WEIGHT = 0.6
 
 _COMPARISON_KEYWORDS = frozenset(
-    {"compare", "comparison", "versus", "vs", "difference", "different",
-     "differ", "contrast", "similar", "similarity", "better", "worse"}
+    {
+        "compare",
+        "comparison",
+        "versus",
+        "vs",
+        "difference",
+        "different",
+        "differ",
+        "contrast",
+        "similar",
+        "similarity",
+        "better",
+        "worse",
+    }
 )
 
 _REVIEW_KEYWORDS = frozenset(
-    {"review", "overview", "survey", "literature", "recent", "current",
-     "progress", "advances", "developments"}
+    {
+        "review",
+        "overview",
+        "survey",
+        "literature",
+        "recent",
+        "current",
+        "progress",
+        "advances",
+        "developments",
+    }
 )
 
 #: Words that look like proper nouns but are never the subject of a comparison.
@@ -164,17 +190,63 @@ _REVIEW_KEYWORDS = frozenset(
 #: looks like a named entity. Without the imperatives below, "Tell me about
 #: BERT" extracted ["Tell", "BERT"] and scored as a two-item comparison.
 _ITEM_STOPWORDS = frozenset(
-    {"What", "Which", "How", "Why", "When", "Where", "Who", "Compare",
-     "Contrast", "Explain", "Describe", "The", "This", "That", "These",
-     "Tell", "Give", "Show", "Find", "List", "Summarize", "Summarise",
-     "Provide", "Discuss", "Identify", "Extract", "Enumerate", "Define",
-     "Review", "Overview", "Does", "Did", "Is", "Are", "Can", "Should"}
+    {
+        "What",
+        "Which",
+        "How",
+        "Why",
+        "When",
+        "Where",
+        "Who",
+        "Compare",
+        "Contrast",
+        "Explain",
+        "Describe",
+        "The",
+        "This",
+        "That",
+        "These",
+        "Tell",
+        "Give",
+        "Show",
+        "Find",
+        "List",
+        "Summarize",
+        "Summarise",
+        "Provide",
+        "Discuss",
+        "Identify",
+        "Extract",
+        "Enumerate",
+        "Define",
+        "Review",
+        "Overview",
+        "Does",
+        "Did",
+        "Is",
+        "Are",
+        "Can",
+        "Should",
+    }
 )
 
 _TOPIC_NOISE = (
-    "literature review", "state of the art", "tell me about", "give me",
-    "show me", "provide", "review", "overview", "survey", "summarize",
-    "summarise", "summary", "recent", "current", "what is", "what are",
+    "literature review",
+    "state of the art",
+    "tell me about",
+    "give me",
+    "show me",
+    "provide",
+    "review",
+    "overview",
+    "survey",
+    "summarize",
+    "summarise",
+    "summary",
+    "recent",
+    "current",
+    "what is",
+    "what are",
 )
 
 
@@ -251,9 +323,7 @@ class QueryRouter:
 
     @staticmethod
     def _score_summary(query: str, normalised: str) -> RoutingDecision:
-        confidence = sum(
-            _SUMMARY_PATTERN_WEIGHT for p in _SUMMARY_PATTERNS if p.search(normalised)
-        )
+        confidence = sum(_SUMMARY_PATTERN_WEIGHT for p in _SUMMARY_PATTERNS if p.search(normalised))
         return RoutingDecision(
             query_type=QueryType.SUMMARY,
             method="answer_question",

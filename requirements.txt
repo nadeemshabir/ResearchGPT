@@ -46,5 +46,6 @@ uvicorn[standard]>=0.27
 # fails at request time with a RuntimeError rather than at import.
 python-multipart>=0.0.9
 
-# --- UI -------------------------------------------------------------------
-streamlit>=1.29
+# The UI is a React bundle built by `frontend/` and served by the API from
+# static/. Streamlit was removed in Milestone 3: it capped how good the
+# interface could look and it cannot express citation-to-source linking.

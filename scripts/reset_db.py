@@ -24,9 +24,7 @@ from src.utils.logging import setup_logging  # noqa: E402
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument(
-        "--yes", action="store_true", help="Skip the confirmation prompt"
-    )
+    parser.add_argument("--yes", action="store_true", help="Skip the confirmation prompt")
     args = parser.parse_args()
 
     setup_logging()

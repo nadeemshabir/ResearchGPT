@@ -120,8 +120,12 @@ def evaluate_run(
         relevant = qrels[qid]
 
         for k in k_values:
-            totals[f"recall@{k}"] = totals.get(f"recall@{k}", 0.0) + recall_at_k(ranked, relevant, k)
-            totals[f"precision@{k}"] = totals.get(f"precision@{k}", 0.0) + precision_at_k(ranked, relevant, k)
+            totals[f"recall@{k}"] = totals.get(f"recall@{k}", 0.0) + recall_at_k(
+                ranked, relevant, k
+            )
+            totals[f"precision@{k}"] = totals.get(f"precision@{k}", 0.0) + precision_at_k(
+                ranked, relevant, k
+            )
             totals[f"ndcg@{k}"] = totals.get(f"ndcg@{k}", 0.0) + ndcg_at_k(ranked, relevant, k)
             totals[f"hit@{k}"] = totals.get(f"hit@{k}", 0.0) + hit_rate_at_k(ranked, relevant, k)
         totals["mrr"] = totals.get("mrr", 0.0) + reciprocal_rank(ranked, relevant)

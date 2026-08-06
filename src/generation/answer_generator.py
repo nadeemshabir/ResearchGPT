@@ -59,9 +59,7 @@ class AnswerGenerator:
         self.use_multi_agent = (
             use_multi_agent if use_multi_agent is not None else settings.use_multi_agent
         )
-        self.use_citations = (
-            use_citations if use_citations is not None else settings.use_citations
-        )
+        self.use_citations = use_citations if use_citations is not None else settings.use_citations
         self.use_smart_routing = (
             use_smart_routing if use_smart_routing is not None else settings.use_smart_routing
         )
@@ -156,8 +154,7 @@ class AnswerGenerator:
                     # The LLM citation stage is redundant when citations are
                     # attached deterministically afterwards, and running both
                     # double-cites every paragraph.
-                    use_citations=self.use_citations
-                    and not self.use_deterministic_citations,
+                    use_citations=self.use_citations and not self.use_deterministic_citations,
                     use_critique=True,
                 )
                 answer = result["answer"]
@@ -349,14 +346,10 @@ class AnswerGenerator:
                 decision,
             )
 
-        return self._with_routing_metadata(
-            self.answer_question(user_query, **kwargs), decision
-        )
+        return self._with_routing_metadata(self.answer_question(user_query, **kwargs), decision)
 
     @staticmethod
-    def _with_routing_metadata(
-        response: dict[str, Any], decision: Any
-    ) -> dict[str, Any]:
+    def _with_routing_metadata(response: dict[str, Any], decision: Any) -> dict[str, Any]:
         """Record the routing decision on a response.
 
         Also guarantees ``refused`` is present. Every branch of ``smart_answer``
@@ -429,7 +422,9 @@ class AnswerGenerator:
             except LLMError as exc:
                 logger.warning("Skipping %r in review: %s", paper["title"], exc)
                 continue
-            summaries.append({**{k: paper[k] for k in ("title", "author", "year")}, "summary": summary})
+            summaries.append(
+                {**{k: paper[k] for k in ("title", "author", "year")}, "summary": summary}
+            )
 
         if not summaries:
             return {
@@ -482,9 +477,7 @@ class AnswerGenerator:
         missing = [item for item, count in per_item_counts.items() if count == 0]
         if len(missing) == len(items):
             return {
-                "comparison": (
-                    f"The indexed papers contain nothing about {' or '.join(items)}."
-                ),
+                "comparison": (f"The indexed papers contain nothing about {' or '.join(items)}."),
                 "items": items,
                 "aspects": aspects,
                 "sources": [],
@@ -553,9 +546,7 @@ class AnswerGenerator:
                     "relevance_score": round(float(score), 4),
                 }
 
-        return sorted(
-            by_paper.values(), key=lambda s: s["relevance_score"], reverse=True
-        )
+        return sorted(by_paper.values(), key=lambda s: s["relevance_score"], reverse=True)
 
     def get_stats(self) -> dict[str, Any]:
         """System configuration, for the UI and health checks."""

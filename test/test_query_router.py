@@ -31,9 +31,7 @@ def router() -> QueryRouter:
         "Contrast ResNet and VGG on ImageNet",
     ],
 )
-def test_comparison_queries_route_to_comparison(
-    router: QueryRouter, query: str
-) -> None:
+def test_comparison_queries_route_to_comparison(router: QueryRouter, query: str) -> None:
     assert router.route_query(query).query_type == QueryType.COMPARISON
 
 
@@ -55,9 +53,7 @@ def test_comparison_items_are_extracted(router: QueryRouter) -> None:
 
 
 def test_comparison_items_from_a_between_phrasing(router: QueryRouter) -> None:
-    items = router.extract_comparison_items(
-        "What is the difference between BERT and RoBERTa?"
-    )
+    items = router.extract_comparison_items("What is the difference between BERT and RoBERTa?")
 
     assert items == ["BERT", "RoBERTa"]
 
@@ -83,9 +79,7 @@ def test_a_single_named_entity_is_not_a_comparison(router: QueryRouter) -> None:
         "Overview of RAG systems",
     ],
 )
-def test_review_queries_route_to_literature_review(
-    router: QueryRouter, query: str
-) -> None:
+def test_review_queries_route_to_literature_review(router: QueryRouter, query: str) -> None:
     assert router.route_query(query).query_type == QueryType.LITERATURE_REVIEW
 
 
@@ -114,9 +108,7 @@ def test_extract_topic_never_returns_empty(router: QueryRouter) -> None:
         "Enumerate the ablations",
     ],
 )
-def test_extraction_queries_route_to_extraction(
-    router: QueryRouter, query: str
-) -> None:
+def test_extraction_queries_route_to_extraction(router: QueryRouter, query: str) -> None:
     assert router.route_query(query).query_type == QueryType.EXTRACTION
 
 
@@ -124,15 +116,11 @@ def test_extraction_queries_route_to_extraction(
 
 
 def test_definition_queries_route_to_definition(router: QueryRouter) -> None:
-    assert router.route_query("What is self-attention?").query_type == (
-        QueryType.DEFINITION
-    )
+    assert router.route_query("What is self-attention?").query_type == (QueryType.DEFINITION)
 
 
 def test_summary_queries_route_to_summary(router: QueryRouter) -> None:
-    assert router.route_query("Summarize the main findings").query_type == (
-        QueryType.SUMMARY
-    )
+    assert router.route_query("Summarize the main findings").query_type == (QueryType.SUMMARY)
 
 
 # --- the fallback, which is most of the traffic -----------------------------

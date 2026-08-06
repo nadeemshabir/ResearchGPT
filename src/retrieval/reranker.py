@@ -42,9 +42,7 @@ class Reranker:
 
             self.model = CrossEncoder(self.model_name, device=self.device)
         except Exception as exc:  # noqa: BLE001
-            raise RetrievalError(
-                f"Could not load reranker {self.model_name!r}: {exc}"
-            ) from exc
+            raise RetrievalError(f"Could not load reranker {self.model_name!r}: {exc}") from exc
         logger.info("Reranker ready")
 
     def rerank(

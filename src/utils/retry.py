@@ -56,9 +56,7 @@ def call_with_retry(
         except RETRYABLE_LLM_ERRORS as exc:
             last_error = exc
             if attempt == max_retries:
-                logger.error(
-                    "%s failed after %d attempts: %s", description, attempt + 1, exc
-                )
+                logger.error("%s failed after %d attempts: %s", description, attempt + 1, exc)
                 raise
             delay = min(initial_backoff * (2**attempt), max_backoff)
             delay = random.uniform(0, delay)  # noqa: S311 - jitter, not crypto

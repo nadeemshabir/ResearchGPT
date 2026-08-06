@@ -294,9 +294,7 @@ def main() -> int:
     print(f"\nSciFact {args.split}: {data.summary()}\n")
 
     embedder = EmbeddingGenerator()
-    database = index_scifact(
-        data, embedder, chunk_size=args.chunk_size, force=args.force_reindex
-    )
+    database = index_scifact(data, embedder, chunk_size=args.chunk_size, force=args.force_reindex)
 
     evaluator = RetrievalEvaluator(data, embedder, database)
 

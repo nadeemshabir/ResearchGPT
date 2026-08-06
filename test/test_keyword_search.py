@@ -60,7 +60,7 @@ def searcher() -> KeywordSearcher:
 
 
 def test_hyphenated_terms_stay_whole() -> None:
-    """"self-attention" split into two tokens would stop matching the phrase.
+    """ "self-attention" split into two tokens would stop matching the phrase.
 
     These are precisely the terms BM25 is in the pipeline to catch, since dense
     embeddings place "self-attention" and "attention" close together.
@@ -96,7 +96,15 @@ def test_empty_text_yields_no_tokens() -> None:
 
 
 def test_unicode_maths_does_not_crash_tokenisation() -> None:
-    assert tokenize("scaling by 1/√dk where α ≥ 0.5") == ["scaling", "by", "1", "dk", "where", "0", "5"]
+    assert tokenize("scaling by 1/√dk where α ≥ 0.5") == [
+        "scaling",
+        "by",
+        "1",
+        "dk",
+        "where",
+        "0",
+        "5",
+    ]
 
 
 # --- search -----------------------------------------------------------------
