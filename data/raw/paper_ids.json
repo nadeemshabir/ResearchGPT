@@ -1,0 +1,10 @@
+{
+  "NIPS-2017-attention-is-all-you-need-Paper (1).pdf": "attention_2017",
+  "N19-1423.pdf": "bert_2019",
+  "NeurIPS-2020-language-models-are-few-shot-learners-Paper.pdf": "gpt3_2020",
+  "NIPS-2012-imagenet-classification-with-deep-convolutional-neural-networks-Paper.pdf": "alexnet_2012",
+  "Training_language_models_to_follow_instructions_with_human_feedback.pdf": "instructgpt_2022",
+  "2312.10997v5.pdf": "rag_survey_2023",
+  "llama2024llama3.pdf": "llama3_2024",
+  "DeepSeek-R1-Document.pdf": "deepseek_r1_2025"
+}

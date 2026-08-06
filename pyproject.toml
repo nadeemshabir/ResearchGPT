@@ -1,0 +1,73 @@
+[project]
+name = "researchgpt"
+version = "0.2.0"
+description = "Retrieval-augmented question answering over research papers"
+readme = "README.md"
+license = { file = "LICENSE" }
+requires-python = ">=3.10"
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+exclude = ["venv", ".venv", "data", ".cache"]
+
+[tool.ruff.lint]
+select = [
+    "E",    # pycodestyle errors
+    "F",    # pyflakes
+    "I",    # import sorting
+    "UP",   # pyupgrade
+    "B",    # bugbear
+    "SIM",  # simplify
+    "T20",  # flake8-print: no print() in library code
+]
+ignore = [
+    "E501",  # line length is handled by the formatter
+    "B008",  # function call in default argument (Streamlit idiom)
+]
+
+[tool.ruff.lint.per-file-ignores]
+# The Streamlit app is the presentation layer; scripts are CLIs. Both are
+# allowed to write to stdout. Nothing under src/ is.
+"app.py" = ["T20"]
+"scripts/*" = ["T20"]
+"eval/*" = ["T20"]
+# Tests reach into private helpers deliberately: the fusion maths and the
+# heading matcher are the units worth testing, and exercising them only through
+# public entry points would need a live model and a populated store.
+"test/*" = ["SLF001"]
+
+[tool.mypy]
+python_version = "3.10"
+warn_unused_configs = true
+ignore_missing_imports = true
+check_untyped_defs = true
+exclude = ["venv", "\\.venv", "data"]
+
+[tool.pytest.ini_options]
+testpaths = ["test"]
+addopts = "-q --strict-markers"
+
+[tool.coverage.run]
+source = ["src", "eval"]
+branch = true
+
+[tool.coverage.report]
+skip_covered = true
+show_missing = true
+exclude_lines = [
+    "pragma: no cover",
+    "if TYPE_CHECKING:",
+    "raise NotImplementedError",
+    "if __name__ == .__main__.:",
+]
+# The CLI entrypoints under eval/ are argument parsing around functions that
+# are tested directly; measuring them rewards importing, not verifying.
+omit = [
+    "eval/retrieval_eval.py",
+    "eval/generation_eval.py",
+    "eval/refusal.py",
+    "eval/sweep.py",
+    "eval/testset.py",
+    "eval/scifact.py",
+]

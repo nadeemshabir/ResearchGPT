@@ -1,0 +1,113 @@
+{
+  "note": "Questions this corpus CANNOT answer. The corpus is 8 papers: AlexNet 2012, Transformer 2017, BERT 2019, GPT-3 2020, InstructGPT 2022, RAG survey 2023, Llama 3 2024, DeepSeek-R1 2025.",
+  "kinds": {
+    "off_topic": "Nothing to do with the papers. Cooking, sport, geography, health.",
+    "near_miss": "Uses the papers' own vocabulary but asks for something they never report: a model published after them, a benchmark they never ran, or a component the architecture does not have. These are the hard ones -- they score high on similarity, so the retrieval gate lets them through and the model has to catch them.",
+    "unknowable": "No paper could answer it. Future events, opinions, predictions."
+  },
+  "questions": [
+    {
+      "question": "What is the capital city of France?",
+      "kind": "off_topic"
+    },
+    {
+      "question": "How long should I bake sourdough bread?",
+      "kind": "off_topic"
+    },
+    {
+      "question": "how much protein should I consume daily for gaining 2 kg of muscle in 2 months?",
+      "kind": "off_topic"
+    },
+    {
+      "question": "What is the best recipe for a chocolate cake?",
+      "kind": "off_topic"
+    },
+    {
+      "question": "What is the population of Tokyo in 2023?",
+      "kind": "off_topic"
+    },
+    {
+      "question": "What is the most effective way to treat depression?",
+      "kind": "off_topic"
+    },
+    {
+      "question": "What is the most effective way to prevent heart disease?",
+      "kind": "off_topic"
+    },
+    {
+      "question": "What is the latest research on quantum computing?",
+      "kind": "off_topic"
+    },
+
+    {
+      "question": "What reward model did BERT use during RLHF training?",
+      "kind": "near_miss",
+      "why": "BERT predates RLHF entirely. The words are all in the corpus; the combination is not."
+    },
+    {
+      "question": "What was BERT's score on the SuperGLUE leaderboard?",
+      "kind": "near_miss",
+      "why": "The BERT paper reports GLUE (80.5) and SQuAD. SuperGLUE is named but never scored."
+    },
+    {
+      "question": "What was AlexNet's top-5 error rate in the ILSVRC-2015 challenge?",
+      "kind": "near_miss",
+      "why": "The paper is from 2012 and reports ILSVRC-2010 and 2012. A 2015 result cannot be in it."
+    },
+    {
+      "question": "What BLEU score did the Transformer achieve on the WMT 2022 English-to-German task?",
+      "kind": "near_miss",
+      "why": "The paper reports WMT 2014 (28.4 BLEU). A 2022 result cannot exist in a 2017 paper. Replaces an earlier question about a '24-layer Transformer', which was a bad test: BERT-Large in the same corpus IS a 24-layer transformer with 16 heads, so answering it was correct behaviour, not a hallucination."
+    },
+    {
+      "question": "How many parameters does GPT-4 use during pretraining?",
+      "kind": "near_miss",
+      "why": "GPT-3 is in the corpus and GPT-4 is not, so retrieval returns confident, wrong context."
+    },
+    {
+      "question": "How does DeepSeek-R1 perform on the ARC-AGI benchmark?",
+      "kind": "near_miss",
+      "why": "R1 reports AIME, MATH-500, Codeforces and MMLU. ARC-AGI is not among them."
+    },
+    {
+      "question": "What is the context window length of Llama 4?",
+      "kind": "near_miss",
+      "why": "Llama 3 is indexed. The model name differs by one character from something real."
+    },
+    {
+      "question": "Which vision encoder does InstructGPT use for image inputs?",
+      "kind": "near_miss",
+      "why": "InstructGPT is text-only. Llama 3 in the same corpus does have a vision encoder, which makes the wrong answer easy to reach for."
+    },
+    {
+      "question": "What dropout rate did DeepSeek-R1 use in its convolutional layers?",
+      "kind": "near_miss",
+      "why": "R1 has no convolutional layers. AlexNet in the same corpus has both dropout and convolutions."
+    },
+
+    {
+      "question": "Which model will be state of the art in 2030?",
+      "kind": "unknowable"
+    },
+    {
+      "question": "What is the weather forecast for New York City on July 4, 2025?",
+      "kind": "unknowable"
+    },
+    {
+      "question": "What is the best strategy to win the FIFA World Cup in 2026?",
+      "kind": "unknowable"
+    },
+    {
+      "question": "What is the most effective way to reduce global warming by 2050?",
+      "kind": "unknowable"
+    },
+    {
+      "question": "What will be the next big breakthrough in AI research?",
+      "kind": "unknowable"
+    },
+    {
+      "question": "What is the GDP of India in 2026?",
+      "kind": "unknowable"
+    }
+  ]
+}

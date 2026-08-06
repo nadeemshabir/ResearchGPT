@@ -1,0 +1,30 @@
+# Development dependencies. Install with:
+#   pip install -r requirements.txt -r requirements-dev.txt
+
+-r requirements.txt
+
+# Linting and formatting
+ruff>=0.6
+
+# Type checking
+mypy>=1.11
+
+# Testing. No test calls a real LLM API: providers are stubbed and the retry
+# policy's sleeps are patched out, so the suite runs offline in about 40s.
+pytest>=8.0
+pytest-cov>=5.0
+
+# --- Evaluation harness (Milestone 2) -------------------------------------
+# BEIR datasets are pulled from the HuggingFace hub rather than the `beir`
+# package, which drags in a large dependency tree for loaders we do not need.
+datasets>=2.19
+
+# RAGAS powers the generation-side metrics (faithfulness, answer relevancy,
+# context precision/recall) and synthetic test-set generation.
+ragas>=0.4,<0.5
+
+# Required by ragas, and pinned below 0.4 deliberately: langchain-community
+# 0.4 removed `chat_models.vertexai`, which ragas 0.4.x still imports, so the
+# newer version fails at import time. This is an eval-only dependency -- the
+# application itself needs only langchain-text-splitters.
+langchain-community>=0.3,<0.4

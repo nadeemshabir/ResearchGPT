@@ -1,0 +1,99 @@
+{
+  "results_file": "generation-single-shot-20260805-161415.json",
+  "num_graded": 23,
+  "updated_at": "2026-08-06T04:36:06.680957+00:00",
+  "grades": {
+    "q006": {
+      "supported": "y",
+      "answers_question": "y"
+    },
+    "q015": {
+      "supported": "y",
+      "answers_question": "y"
+    },
+    "q018": {
+      "supported": "y",
+      "answers_question": "y"
+    },
+    "q036": {
+      "supported": "n",
+      "answers_question": "y"
+    },
+    "q003": {
+      "supported": "n",
+      "answers_question": "y"
+    },
+    "q028": {
+      "supported": "y",
+      "answers_question": "y"
+    },
+    "q030": {
+      "supported": "y",
+      "answers_question": "y"
+    },
+    "q039": {
+      "supported": "n",
+      "answers_question": "y"
+    },
+    "q037": {
+      "supported": "y",
+      "answers_question": "y"
+    },
+    "q021": {
+      "supported": "y",
+      "answers_question": "y"
+    },
+    "q001": {
+      "supported": "y",
+      "answers_question": "y"
+    },
+    "q002": {
+      "supported": "y",
+      "answers_question": "y"
+    },
+    "q005": {
+      "supported": "n",
+      "answers_question": "y"
+    },
+    "q007": {
+      "supported": "y",
+      "answers_question": "y"
+    },
+    "q009": {
+      "supported": "y",
+      "answers_question": "y"
+    },
+    "q010": {
+      "supported": "y",
+      "answers_question": "y"
+    },
+    "q011": {
+      "supported": "y",
+      "answers_question": "y"
+    },
+    "q013": {
+      "supported": "y",
+      "answers_question": "y"
+    },
+    "q014": {
+      "supported": "y",
+      "answers_question": "y"
+    },
+    "q017": {
+      "supported": "y",
+      "answers_question": "y"
+    },
+    "q019": {
+      "supported": "y",
+      "answers_question": "y"
+    },
+    "q022": {
+      "supported": "y",
+      "answers_question": "y"
+    },
+    "q023": {
+      "supported": "n",
+      "answers_question": "y"
+    }
+  }
+}

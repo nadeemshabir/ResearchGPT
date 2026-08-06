@@ -1,462 +1,397 @@
-"""
-Complete Retrieval System
-Orchestrates all retrieval components
-"""
+"""Retrieval orchestration: query processing, hybrid search, reranking."""
 
-from typing import List, Dict, Optional
+from __future__ import annotations
 
-from .semantic_search import SemanticSearcher
-from .keyword_search import KeywordSearcher
-from .hybrid_search import HybridSearcher
-from .reranker import Reranker
-from .query_processor import QueryProcessor
+import time
+from typing import Any
+
+from src.config import FusionMethod, NormalisationMethod, get_settings
+from src.exceptions import NoRelevantContextError
+from src.ingestion.database import VectorDatabase
+from src.ingestion.embedder import EmbeddingGenerator
+from src.retrieval.hybrid_search import HybridSearcher
+from src.retrieval.query_processor import QueryProcessor
+from src.retrieval.reranker import Reranker
+from src.utils.logging import get_logger
+
+logger = get_logger(__name__)
 
 
 class RetrievalSystem:
-    """
-    Complete retrieval system combining all components
-    """
-    
+    """Full retrieval pipeline over the indexed corpus."""
+
     def __init__(
         self,
-        use_reranking: bool = True,
-        use_query_processing: bool = True,
-        semantic_weight: float = 0.7,
-        keyword_weight: float = 0.3
+        use_reranking: bool | None = None,
+        use_query_processing: bool | None = None,
+        semantic_weight: float | None = None,
+        keyword_weight: float | None = None,
+        fusion: FusionMethod | None = None,
+        normalisation: NormalisationMethod | None = None,
+        embedder: EmbeddingGenerator | None = None,
+        database: VectorDatabase | None = None,
     ):
         """
-        Initialize complete retrieval system
-        
         Args:
-            use_reranking: Whether to use cross-encoder reranking
-            use_query_processing: Whether to process queries
-            semantic_weight: Weight for semantic search
-            keyword_weight: Weight for keyword search
+            use_reranking: Apply the cross-encoder. Defaults to
+                ``Settings.use_reranking``. Disabling it skips loading the
+                model entirely, which is the fast path for evaluation sweeps.
+            use_query_processing: Clean and expand queries first.
+            semantic_weight: Dense weight for hybrid fusion.
+            keyword_weight: BM25 weight for hybrid fusion.
+            fusion: ``"weighted"`` or ``"rrf"``. See :class:`HybridSearcher`.
+            normalisation: Score normaliser for weighted fusion; ignored by RRF.
+            embedder: Shared embedding model.
+            database: Shared vector store.
         """
-        print("🚀 Initializing Complete Retrieval System...")
-        print("="*60)
-        
-        self.use_reranking = use_reranking
-        self.use_query_processing = use_query_processing
-        
-        # Initialize components
-        print("\n1️⃣ Initializing Hybrid Search...")
+        settings = get_settings()
+        self.use_reranking = (
+            use_reranking if use_reranking is not None else settings.use_reranking
+        )
+        self.use_query_processing = (
+            use_query_processing
+            if use_query_processing is not None
+            else settings.use_query_processing
+        )
+
+        logger.info(
+            "Initialising retrieval (reranking=%s, query_processing=%s)",
+            self.use_reranking,
+            self.use_query_processing,
+        )
+
         self.hybrid_searcher = HybridSearcher(
             semantic_weight=semantic_weight,
-            keyword_weight=keyword_weight
+            keyword_weight=keyword_weight,
+            fusion=fusion,
+            normalisation=normalisation,
+            embedder=embedder,
+            database=database,
         )
-        
-        if use_query_processing:
-            print("\n2️⃣ Initializing Query Processor...")
-            self.query_processor = QueryProcessor()
-        else:
-            self.query_processor = None
-        
-        if use_reranking:
-            print("\n3️⃣ Initializing Reranker...")
-            self.reranker = Reranker()
-        else:
-            self.reranker = None
-        
-        print("\n" + "="*60)
-        print("✅ Retrieval System Ready!")
-        print("="*60)
-    
+        self.query_processor = QueryProcessor() if self.use_query_processing else None
+        self.reranker = Reranker() if self.use_reranking else None
+
+        logger.info("Retrieval system ready")
+
+    @property
+    def database(self) -> VectorDatabase:
+        """The underlying vector store."""
+        return self.hybrid_searcher.semantic_searcher.database
+
     def search(
         self,
         query: str,
-        top_k: int = 10,
-        rerank_top_k: int = 50,
-        process_query: bool = None,
-        rerank: bool = None,
-        return_metadata: bool = True
-    ) -> Dict:
-        """
-        Complete search pipeline
-        
+        top_k: int | None = None,
+        candidate_k: int | None = None,
+        process_query: bool | None = None,
+        rerank: bool | None = None,
+    ) -> dict[str, Any]:
+        """Retrieve and rank chunks for ``query``.
+
         Args:
-            query: Search query
-            top_k: Number of final results
-            rerank_top_k: Number of candidates to rerank
-            process_query: Override query processing setting
-            rerank: Override reranking setting
-            return_metadata: Include search metadata
-            
+            query: User query.
+            top_k: Final result count. Defaults to ``Settings.top_k_rerank``.
+            candidate_k: Candidates fetched before reranking. Defaults to
+                ``Settings.top_k_retrieve``.
+            process_query: Override query processing for this call.
+            rerank: Override reranking for this call.
+
         Returns:
-            Dictionary with results and metadata
+            ``{"results": [...], "metadata": {...}}``. ``metadata`` records
+            timings and the query transformations applied, so retrieval can be
+            audited without re-running it.
         """
-        if not query or not query.strip():
-            return {'results': [], 'metadata': {'error': 'Empty query'}}
-        
-        print(f"\n{'='*80}")
-        print(f"SEARCH QUERY: {query}")
-        print(f"{'='*80}")
-        
-        # Determine settings
-        process_query = process_query if process_query is not None else self.use_query_processing
+        settings = get_settings()
+        top_k = top_k or settings.top_k_rerank
+        candidate_k = candidate_k or settings.top_k_retrieve
+        process_query = (
+            process_query if process_query is not None else self.use_query_processing
+        )
         rerank = rerank if rerank is not None else self.use_reranking
-        
-        metadata = {
-            'original_query': query,
-            'processed_query': query,
-            'query_variations': [query],
-            'search_method': 'hybrid',
-            'reranked': rerank,
-            'top_k': top_k
+
+        metadata: dict[str, Any] = {
+            "original_query": query,
+            "search_query": query,
+            "search_method": "hybrid",
+            "reranked": False,
+            "top_k": top_k,
+            "candidate_k": candidate_k,
         }
-        
-        # Step 1: Process query (optional)
+
+        if not query or not query.strip():
+            metadata["error"] = "empty query"
+            return {"results": [], "metadata": metadata}
+
+        started = time.perf_counter()
+        search_query = query
+
         if process_query and self.query_processor:
-            print("\n📝 Step 1: Processing query...")
-            query_result = self.query_processor.process_query(query)
-            processed_query = query_result['cleaned']
-            query_variations = query_result['variations']
-            
-            metadata['processed_query'] = processed_query
-            metadata['query_variations'] = query_variations
-            metadata['query_intent'] = query_result['intent']
-            metadata['key_terms'] = query_result['key_terms']
-            
-            # Use best variation for search
-            search_query = processed_query
-        else:
-            search_query = query
-        
-        # Step 2: Hybrid search
-        print("\n🔍 Step 2: Hybrid search...")
+            processed = self.query_processor.process_query(query)
+            search_query = processed["cleaned"] or query
+            metadata.update(
+                {
+                    "search_query": search_query,
+                    "query_intent": processed["intent"],
+                    "key_terms": processed["key_terms"],
+                    "query_variations": processed["variations"],
+                }
+            )
+
+        retrieve_started = time.perf_counter()
         results = self.hybrid_searcher.search(
             query=search_query,
-            top_k=rerank_top_k if rerank else top_k,
-            return_component_scores=True
+            top_k=candidate_k if rerank else top_k,
+            return_component_scores=True,
         )
-        
-        metadata['initial_results_count'] = len(results)
-        
+        metadata["retrieval_ms"] = round((time.perf_counter() - retrieve_started) * 1000, 1)
+        metadata["candidates_retrieved"] = len(results)
+
         if not results:
-            print("⚠️ No results found")
-            return {'results': [], 'metadata': metadata}
-        
-        # Step 3: Re-ranking (optional)
+            metadata["total_ms"] = round((time.perf_counter() - started) * 1000, 1)
+            logger.info("No candidates retrieved for %r", query[:60])
+            return {"results": [], "metadata": metadata}
+
         if rerank and self.reranker and len(results) > 1:
-            print(f"\n🔄 Step 3: Re-ranking top {len(results)} results...")
-            results = self.reranker.rerank(
-                query=query,  # Use original query for reranking
-                results=results,
-                top_k=top_k
-            )
-            metadata['reranked_count'] = len(results)
+            rerank_started = time.perf_counter()
+            # The raw query is used deliberately: the cross-encoder expects
+            # natural language, not the keyword-stripped search query.
+            results = self.reranker.rerank(query=query, results=results, top_k=top_k)
+            metadata["rerank_ms"] = round((time.perf_counter() - rerank_started) * 1000, 1)
+            metadata["reranked"] = True
         else:
             results = results[:top_k]
-        
-        # Step 4: Format final results
-        print(f"\n✅ Returning {len(results)} results")
-        
-        if not return_metadata:
-            return {'results': results}
-        
-        return {
-            'results': results,
-            'metadata': metadata
-        }
-    
-    def multi_query_search(
-        self,
-        query: str,
-        top_k: int = 10,
-        num_variations: int = 3
-    ) -> Dict:
-        """
-        Search using multiple query variations
-        
-        Args:
-            query: Original query
-            top_k: Number of final results
-            num_variations: Number of query variations
-            
-        Returns:
-            Search results
-        """
-        print(f"\n🔍 Multi-Query Search: {num_variations} variations")
-        
-        # Generate query variations
-        if self.query_processor:
-            variations = self.query_processor.generate_query_variations(
-                query,
-                num_variations=num_variations
-            )
-        else:
-            variations = [query]
-        
-        print(f"   Generated {len(variations)} variations:")
-        for i, var in enumerate(variations, 1):
-            print(f"   {i}. {var}")
-        
-        # Search with each variation
-        all_results = {}
-        for i, var_query in enumerate(variations, 1):
-            print(f"\n   Searching with variation {i}...")
-            var_results = self.hybrid_searcher.search(var_query, top_k=top_k*2)
-            
-            # Aggregate results
-            for result in var_results:
-                chunk_id = result['id']
-                score = result.get('hybrid_score', 0)
-                
-                if chunk_id not in all_results:
-                    all_results[chunk_id] = {
-                        'result': result,
-                        'scores': [score],
-                        'found_in_variations': 1
-                    }
-                else:
-                    all_results[chunk_id]['scores'].append(score)
-                    all_results[chunk_id]['found_in_variations'] += 1
-        
-        # Aggregate scores (mean)
-        final_results = []
-        for chunk_id, data in all_results.items():
-            result = data['result']
-            result['multi_query_score'] = round(sum(data['scores']) / len(data['scores']), 4)
-            result['found_in_variations'] = data['found_in_variations']
-            final_results.append(result)
-        
-        # Sort by multi-query score
-        final_results.sort(key=lambda x: x['multi_query_score'], reverse=True)
-        
-        # Re-rank
-        for i, result in enumerate(final_results[:top_k], 1):
-            result['rank'] = i
-        
-        return {
-            'results': final_results[:top_k],
-            'metadata': {
-                'query': query,
-                'variations': variations,
-                'num_variations': len(variations),
-                'unique_results': len(all_results)
-            }
-        }
-    
-    def search_with_filters(
-        self,
-        query: str,
-        filters: Dict,
-        top_k: int = 10
-    ) -> Dict:
-        """
-        Search with metadata filters
-        
-        Args:
-            query: Search query
-            filters: Metadata filters (e.g., {'author': 'John Doe'})
-            top_k: Number of results
-            
-        Returns:
-            Filtered search results
-        """
-        print(f"\n🔍 Filtered Search")
-        print(f"   Query: {query}")
-        print(f"   Filters: {filters}")
-        
-        # Search with filters
-        semantic_searcher = self.hybrid_searcher.semantic_searcher
-        results = semantic_searcher.search(
-            query=query,
-            top_k=top_k,
-            filter_dict=filters
+
+        metadata["total_ms"] = round((time.perf_counter() - started) * 1000, 1)
+        logger.info(
+            "Retrieved %d results for %r in %.0fms",
+            len(results),
+            query[:60],
+            metadata["total_ms"],
         )
-        
-        return {
-            'results': results,
-            'metadata': {
-                'query': query,
-                'filters': filters,
-                'num_results': len(results)
-            }
-        }
-    
+        return {"results": results, "metadata": metadata}
+
     def get_relevant_chunks(
         self,
         query: str,
-        max_tokens: int = 4000,
-        min_score: float = 0.5
-    ) -> Dict:
-        """
-        Get relevant chunks for LLM context
-        
+        max_tokens: int | None = None,
+        min_score: float | None = None,
+        top_k: int | None = None,
+    ) -> dict[str, Any]:
+        """Assemble an LLM context window from the best-matching chunks.
+
+        Chunks are added in rank order until ``max_tokens`` would be exceeded.
+
         Args:
-            query: Search query
-            max_tokens: Maximum tokens for context window
-            min_score: Minimum relevance score
-            
+            query: User query.
+            max_tokens: Context budget. Defaults to ``Settings.max_context_tokens``.
+            min_score: Relevance floor. Defaults to ``Settings.min_rerank_score``
+                when reranking is on, ``Settings.min_hybrid_score`` otherwise,
+                since the two score scales are unrelated.
+            top_k: Chunks to consider. Defaults to ``Settings.top_k_rerank``.
+
         Returns:
-            Chunks formatted for LLM context
+            ``{"context": str, "chunks": [...], "metadata": {...}}``.
+
+        Raises:
+            NoRelevantContextError: Nothing cleared the threshold. Raised rather
+                than returning empty context, because an LLM given no context
+                answers from memory instead of from the corpus.
         """
-        print(f"\n📝 Getting relevant chunks for LLM")
-        print(f"   Max tokens: {max_tokens}")
-        print(f"   Min score: {min_score}")
-        
-        # Search with high top_k
-        search_result = self.search(query, top_k=50)
-        results = search_result['results']
-        
-        # Filter by score
+        settings = get_settings()
+        max_tokens = max_tokens or settings.max_context_tokens
+
+        if min_score is None:
+            min_score = (
+                settings.min_rerank_score
+                if self.use_reranking
+                else settings.min_hybrid_score
+            )
+
+        search_result = self.search(query, top_k=top_k or settings.top_k_rerank)
+        results = search_result["results"]
+
+        # Gate 1: is anything relevant at all?
+        #
+        # This must use an *absolute* score. Hybrid scores are min-max
+        # normalised within the retrieved set, so the top result approaches 1.0
+        # no matter how poor the match, and cannot distinguish "good answer"
+        # from "best of nothing". Raw cosine similarity is comparable across
+        # queries, so it can. When reranking is on, the cross-encoder logit
+        # serves the same purpose and is the stronger signal.
         if self.use_reranking:
-            filtered = [r for r in results if r.get('rerank_score', 0) >= min_score]
+            best_absolute = max((r.get("rerank_score", 0.0) for r in results), default=0.0)
+            absolute_floor = settings.min_rerank_score
+            absolute_name = "rerank_score"
         else:
-            filtered = [r for r in results if r.get('hybrid_score', 0) >= min_score]
-        
-        print(f"   Found {len(filtered)} chunks above threshold")
-        
-        # Build context within token limit
-        selected_chunks = []
+            best_absolute = max((r.get("similarity_score", 0.0) for r in results), default=0.0)
+            absolute_floor = settings.min_semantic_similarity
+            absolute_name = "similarity_score"
+
+        if not results or best_absolute < absolute_floor:
+            logger.info(
+                "Refusing %r: best %s %.4f is below the %.4f floor",
+                query[:60],
+                absolute_name,
+                best_absolute,
+                absolute_floor,
+            )
+            raise NoRelevantContextError(
+                query,
+                candidates_considered=len(results),
+                threshold=absolute_floor,
+            )
+
+        # Gate 2: which of the relevant results are worth including?
+        # The fused score is the right signal here, since this is a ranking
+        # question rather than a relevance question.
+        score_key = "rerank_score" if self.use_reranking else "hybrid_score"
+        relevant = [r for r in results if r.get(score_key, 0.0) >= min_score]
+
+        if not relevant:
+            raise NoRelevantContextError(
+                query,
+                candidates_considered=len(results),
+                threshold=min_score,
+            )
+
+        selected: list[dict[str, Any]] = []
         total_tokens = 0
-        
-        for result in filtered:
-            chunk_tokens = result['metadata'].get('num_tokens', len(result['text']) // 4)
-            
-            if total_tokens + chunk_tokens <= max_tokens:
-                selected_chunks.append(result)
-                total_tokens += chunk_tokens
-            else:
-                break
-        
-        print(f"   Selected {len(selected_chunks)} chunks ({total_tokens} tokens)")
-        
-        # Format context
-        context = "\n\n---\n\n".join([
-            f"[Source {i+1}: {chunk['metadata'].get('title', 'Unknown')}]\n{chunk['text']}"
-            for i, chunk in enumerate(selected_chunks)
-        ])
-        
+        for result in relevant:
+            # Fall back to a 4-chars-per-token estimate when the stored count
+            # is missing (older rows predate the metadata field).
+            chunk_tokens = result["metadata"].get("num_tokens") or max(
+                1, len(result["text"]) // 4
+            )
+            if total_tokens + chunk_tokens > max_tokens:
+                continue
+            selected.append(result)
+            total_tokens += chunk_tokens
+
+        if not selected:
+            # Every relevant chunk individually exceeds the budget; take the
+            # best one anyway rather than refusing outright.
+            selected = relevant[:1]
+            total_tokens = selected[0]["metadata"].get("num_tokens", 0)
+            logger.warning(
+                "All relevant chunks exceed the %d-token budget; using the top chunk only",
+                max_tokens,
+            )
+
+        context = "\n\n---\n\n".join(
+            f"[Source {index}: {chunk['metadata'].get('title', 'Unknown')}"
+            f" | Section: {chunk['metadata'].get('section_title', 'Unknown')}]\n{chunk['text']}"
+            for index, chunk in enumerate(selected, 1)
+        )
+
+        logger.info(
+            "Assembled context from %d/%d relevant chunks (%d tokens)",
+            len(selected),
+            len(relevant),
+            total_tokens,
+        )
+
         return {
-            'context': context,
-            'chunks': selected_chunks,
-            'metadata': {
-                'num_chunks': len(selected_chunks),
-                'total_tokens': total_tokens,
-                'query': query
-            }
+            "context": context,
+            "chunks": selected,
+            "metadata": {
+                "query": query,
+                "num_chunks": len(selected),
+                "num_relevant": len(relevant),
+                "num_candidates": len(results),
+                "total_tokens": total_tokens,
+                "min_score": min_score,
+                "score_key": score_key,
+                "retrieval": search_result["metadata"],
+            },
         }
-    
-    def visualize_results(self, search_result: Dict, max_results: int = 5):
+
+    def multi_query_search(
+        self,
+        query: str,
+        top_k: int | None = None,
+        num_variations: int = 3,
+    ) -> dict[str, Any]:
+        """Search several rephrasings and merge by mean score.
+
+        Chunks retrieved by more than one variation are usually more robustly
+        relevant, so ``found_in_variations`` is reported alongside the score.
         """
-        Visualize search results
-        
-        Args:
-            search_result: Result from search()
-            max_results: Max results to display
+        settings = get_settings()
+        top_k = top_k or settings.top_k_rerank
+
+        variations = (
+            self.query_processor.generate_variations(query, num_variations)
+            if self.query_processor
+            else [query]
+        )
+
+        merged: dict[str, dict[str, Any]] = {}
+        for variation in variations:
+            for result in self.hybrid_searcher.search(variation, top_k=top_k * 2):
+                entry = merged.setdefault(result["id"], {"result": result, "scores": []})
+                entry["scores"].append(result.get("hybrid_score", 0.0))
+
+        final: list[dict[str, Any]] = []
+        for entry in merged.values():
+            result = entry["result"]
+            result["multi_query_score"] = round(
+                sum(entry["scores"]) / len(entry["scores"]), 4
+            )
+            result["found_in_variations"] = len(entry["scores"])
+            final.append(result)
+
+        final.sort(
+            key=lambda r: (r["found_in_variations"], r["multi_query_score"]), reverse=True
+        )
+        final = final[:top_k]
+        for rank, result in enumerate(final, 1):
+            result["rank"] = rank
+
+        return {
+            "results": final,
+            "metadata": {
+                "query": query,
+                "variations": variations,
+                "unique_results": len(merged),
+            },
+        }
+
+    def search_with_filters(
+        self,
+        query: str,
+        filters: dict[str, Any],
+        top_k: int | None = None,
+    ) -> dict[str, Any]:
+        """Dense search restricted by chunk metadata.
+
+        Only the semantic searcher supports filtering; BM25 has no metadata
+        index, so hybrid fusion is skipped here.
         """
-        results = search_result['results'][:max_results]
-        metadata = search_result.get('metadata', {})
-        
-        print(f"\n{'='*80}")
-        print("SEARCH RESULTS")
-        print(f"{'='*80}")
-        
-        # Show metadata
-        print(f"\nQuery: {metadata.get('original_query', 'N/A')}")
-        if 'processed_query' in metadata and metadata['processed_query'] != metadata.get('original_query'):
-            print(f"Processed: {metadata['processed_query']}")
-        
-        if 'query_intent' in metadata:
-            print(f"Intent: {metadata['query_intent'].get('type', 'N/A')}")
-        
-        print(f"Method: {metadata.get('search_method', 'N/A')}")
-        print(f"Reranked: {metadata.get('reranked', False)}")
-        print(f"\nShowing {len(results)} of {len(search_result['results'])} results")
-        print(f"{'='*80}\n")
-        
-        # Show results
-        for result in results:
-            print(f"Rank {result['rank']}")
-            print("─" * 80)
-            
-            # Scores
-            if 'rerank_score' in result:
-                print(f"Rerank Score: {result['rerank_score']:.4f}")
-                if 'original_rank' in result:
-                    print(f"  (Original rank: {result['original_rank']})")
-            elif 'hybrid_score' in result:
-                print(f"Hybrid Score: {result['hybrid_score']:.4f}")
-            
-            # Metadata
-            meta = result['metadata']
-            print(f"\nPaper: {meta.get('title', 'Unknown')[:70]}")
-            print(f"Section: {meta.get('section_title', 'Unknown')}")
-            print(f"Chunk: {meta.get('chunk_id', 'N/A')}")
-            
-            # Text preview
-            text = result['text']
-            if len(text) > 250:
-                text = text[:250] + "..."
-            print(f"\n{text}")
-            
-            print(f"\n{'='*80}\n")
+        top_k = top_k or get_settings().top_k_rerank
+        results = self.hybrid_searcher.semantic_searcher.search(
+            query=query, top_k=top_k, filter_dict=filters
+        )
+        return {
+            "results": results,
+            "metadata": {
+                "query": query,
+                "filters": filters,
+                "search_method": "semantic (filtered)",
+                "num_results": len(results),
+            },
+        }
 
-
-def test_retrieval_system():
-    """Test complete retrieval system"""
-    
-    # Initialize system
-    system = RetrievalSystem(
-        use_reranking=True,
-        use_query_processing=True,
-        semantic_weight=0.7,
-        keyword_weight=0.3
-    )
-    
-    # Test queries
-    test_queries = [
-        "What is attention mechanism?",
-        "How does transformer architecture work?",
-        "Compare BERT and GPT models",
-    ]
-    
-    print("\n" + "="*80)
-    print("TESTING COMPLETE RETRIEVAL SYSTEM")
-    print("="*80)
-    
-    for query in test_queries:
-        print(f"\n{'─'*80}")
-        print(f"Query: {query}")
-        print(f"{'─'*80}")
-        
-        # Search
-        result = system.search(query, top_k=3)
-        
-        # Visualize
-        system.visualize_results(result, max_results=3)
-    
-    # Test multi-query search
-    print("\n" + "="*80)
-    print("TESTING MULTI-QUERY SEARCH")
-    print("="*80)
-    
-    result = system.multi_query_search(
-        "transformer attention mechanism",
-        top_k=5,
-        num_variations=3
-    )
-    
-    system.visualize_results(result, max_results=5)
-    
-    # Test context retrieval for LLM
-    print("\n" + "="*80)
-    print("TESTING CONTEXT RETRIEVAL FOR LLM")
-    print("="*80)
-    
-    context_result = system.get_relevant_chunks(
-        "What is attention mechanism?",
-        max_tokens=2000,
-        min_score=3.0
-    )
-    
-    print(f"\nRetrieved {context_result['metadata']['num_chunks']} chunks")
-    print(f"Total tokens: {context_result['metadata']['total_tokens']}")
-    print(f"\nContext preview (first 500 chars):")
-    print(context_result['context'][:500] + "...")
-
-
-if __name__ == "__main__":
-    test_retrieval_system()
+    def get_stats(self) -> dict[str, Any]:
+        """Retrieval configuration and corpus size."""
+        return {
+            "num_chunks": self.database.count(),
+            "num_papers": len(self.database.list_papers()),
+            "use_reranking": self.use_reranking,
+            "use_query_processing": self.use_query_processing,
+            "semantic_weight": round(self.hybrid_searcher.semantic_weight, 3),
+            "keyword_weight": round(self.hybrid_searcher.keyword_weight, 3),
+            "fusion": self.hybrid_searcher.fusion,
+            "normalisation": self.hybrid_searcher.normalisation,
+            "rrf_k": self.hybrid_searcher.rrf_k,
+            "reranker_model": self.reranker.model_name if self.reranker else None,
+        }

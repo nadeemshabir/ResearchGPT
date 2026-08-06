@@ -1,0 +1,51 @@
+{
+  "dataset": "BEIR/scifact:test",
+  "num_queries": 300,
+  "num_documents": 5183,
+  "embedding_model": "all-MiniLM-L6-v2",
+  "chunk_size": 1000,
+  "candidate_k": 50,
+  "complete": false,
+  "generated_at": "2026-08-04T06:12:22.048576+00:00",
+  "results": [
+    {
+      "name": "hybrid_minmax",
+      "description": "Hybrid weighted 0.7/0.3 (minmax)",
+      "config": {
+        "name": "hybrid_minmax",
+        "method": "hybrid",
+        "semantic_weight": 0.7,
+        "keyword_weight": 0.3,
+        "fusion": "weighted",
+        "normalisation": "minmax",
+        "rrf_k": 60,
+        "rerank": false,
+        "candidate_k": 50,
+        "top_k": 10
+      },
+      "num_queries": 300,
+      "metrics": {
+        "hit@1": 0.5633,
+        "hit@10": 0.8233,
+        "hit@3": 0.72,
+        "hit@5": 0.77,
+        "mrr": 0.6512,
+        "ndcg@1": 0.5633,
+        "ndcg@10": 0.6873,
+        "ndcg@3": 0.6478,
+        "ndcg@5": 0.6671,
+        "precision@1": 0.5633,
+        "precision@10": 0.0913,
+        "precision@3": 0.2533,
+        "precision@5": 0.166,
+        "recall@1": 0.5426,
+        "recall@10": 0.811,
+        "recall@3": 0.7058,
+        "recall@5": 0.7523
+      },
+      "mean_latency_ms": 184.0,
+      "p95_latency_ms": 268.3,
+      "total_seconds": 55.2
+    }
+  ]
+}

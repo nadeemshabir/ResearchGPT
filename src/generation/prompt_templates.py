@@ -1,74 +1,124 @@
-"""
-Prompt Templates Module
-High-quality prompts for different generation tasks
+"""Prompt templates for every generation task.
+
+All prompts share one rule: answer only from the supplied excerpts, and say so
+when they are insufficient. Grounding is enforced here rather than left to the
+model's judgement, because ungrounded answers are the failure mode this whole
+system exists to prevent.
 """
 
-from typing import List, Dict
+from __future__ import annotations
+
+from typing import Any
+
+#: Marker the critic must emit before its revised answer. Parsed by
+#: :meth:`~src.generation.agents.CriticAgent._split_critique`.
+IMPROVED_ANSWER_MARKER = "IMPROVED ANSWER:"
+
+_GROUNDING_RULE = (
+    "Answer only from the provided excerpts. If they do not contain enough "
+    "information, say so explicitly instead of filling the gap from general "
+    "knowledge."
+)
+
+#: PDF extraction flattens mathematics: the Transformer paper's attention
+#: equation reaches the model as "softmax(QKT √dk )V" -- superscript, fraction
+#: bar and subscript all lost. Asking for LaTeX lets the frontend render what
+#: the excerpt *says* in readable form.
+#:
+#: The line about not inventing terms matters. Restoring a superscript that
+#: extraction dropped is formatting; adding a term that was never in the
+#: excerpt is a hallucination, and one that faithfulness scoring would likely
+#: miss because the surrounding prose is faithful.
+_MATH_RULE = (
+    "6. MATHS: write every equation, variable, and symbol in LaTeX, never in "
+    "backticks. Use $...$ inline and $$...$$ for a standalone equation.\n"
+    "   - `d_k` is wrong, $d_k$ is right.\n"
+    "   - `1/sqrt(dk)` is wrong, $\\frac{1}{\\sqrt{d_k}}$ is right.\n"
+    "   - Extraction flattens the source, so `softmax(QKT vdk )V` should be "
+    "written $\\mathrm{softmax}\\!\\left(\\frac{QK^T}{\\sqrt{d_k}}\\right)V$.\n"
+    "   Restore only the formatting the notation implies. Never add a term, "
+    "symbol, or operation that is not in the excerpt.\n"
+)
+
+#: Repeated in the system prompt because a rule at position six in a numbered
+#: list is routinely ignored -- the model reached for backticks instead of
+#: LaTeX until this was stated twice.
+_MATH_SYSTEM_RULE = (
+    "Write all mathematics in LaTeX ($...$ inline, $$...$$ for display "
+    "equations), never in backticks or plain text."
+)
 
 
 class PromptTemplates:
-    """Collection of prompt templates for RAG system"""
-    
-    # System prompts for different agent roles
-    SYSTEM_PROMPTS = {
-        'analyzer': """You are a research paper analyzer. Your job is to extract key information from paper excerpts.
+    """Prompt builders, grouped as static methods."""
 
-Focus on:
-- Main findings and conclusions
-- Methodologies used
-- Key technical terms and concepts
-- Important results and metrics
-
-Be concise and factual. Only extract information present in the text.""",
-        
-        'synthesizer': """You are a research synthesis expert. Your job is to combine information from multiple sources into a coherent answer.
-
-Guidelines:
-- Synthesize information logically
-- Remove redundancy
-- Maintain accuracy
-- Organize ideas clearly
-- Connect related concepts
-
-Never add information not present in the sources.""",
-        
-        'citation_agent': """You are a citation expert. Your job is to add proper citations to text.
-
-Rules:
-- Use format: [Paper Title, Year]
-- Cite specific claims, not general statements
-- One citation per specific fact
-- Place citations at end of relevant sentence
-
-Example: "BERT uses bidirectional attention [BERT: Pre-training of Deep Bidirectional Transformers, 2018].\"
-""",
-        
-        'critic': """You are a quality critic. Your job is to improve and refine answers.
-
-Check for:
-- Accuracy (claims match sources)
-- Clarity (easy to understand)
-- Completeness (answers the question)
-- Citations (properly formatted)
-- Coherence (logical flow)
-
-Suggest specific improvements."""
+    SYSTEM_PROMPTS: dict[str, str] = {
+        "qa": (
+            "You are a research assistant answering questions about academic "
+            "papers.\n\n" + _GROUNDING_RULE + "\n\n" + _MATH_SYSTEM_RULE
+        ),
+        "analyzer": (
+            "You are a research paper analyzer. Extract key information from "
+            "paper excerpts.\n\n"
+            "Focus on:\n"
+            "- Main findings and conclusions\n"
+            "- Methodologies used\n"
+            "- Key technical terms and concepts\n"
+            "- Quantitative results and metrics\n\n"
+            "Be concise and factual. Extract only what is present in the text; "
+            "never infer or embellish."
+        ),
+        "synthesizer": (
+            "You are a research synthesis expert. Combine information from "
+            "multiple sources into one coherent answer.\n\n"
+            "Guidelines:\n"
+            "- Organise ideas logically and remove redundancy\n"
+            "- Connect related concepts across sources\n"
+            "- Preserve specific numbers, metrics, and terminology exactly\n\n"
+            "Never introduce information absent from the sources."
+        ),
+        "citation_agent": (
+            "You are a citation expert. Attach citations to claims.\n\n"
+            "Rules:\n"
+            "- Use the format [Paper Title, Year]\n"
+            "- Cite specific claims, not general statements\n"
+            "- Place the citation at the end of the sentence it supports\n"
+            "- Never invent a source that is not in the supplied list\n\n"
+            "Return the full text with citations added and nothing else."
+        ),
+        "critic": (
+            "You are a quality critic improving draft answers.\n\n"
+            "Check for:\n"
+            "- Accuracy: every claim traceable to the sources\n"
+            "- Completeness: the question is fully answered\n"
+            "- Clarity and logical flow\n"
+            "- Correctly formatted citations\n\n"
+            f"Reply with your review, then the marker {IMPROVED_ANSWER_MARKER} "
+            "followed by the full revised answer."
+        ),
     }
-    
+
     @staticmethod
-    def build_qa_prompt(question: str, context: str, citations: List[Dict] = None) -> str:
-        """
-        Build Question-Answering prompt
-        
+    def build_qa_prompt(question: str, context: str, write_citations: bool = True) -> str:
+        """Single-shot question answering over retrieved context.
+
         Args:
-            question: User question
-            context: Retrieved context from papers
-            citations: Optional citation information
-            
-        Returns:
-            Formatted prompt
+            question: The user's question.
+            context: Retrieved excerpts, already formatted.
+            write_citations: Ask the model to cite. Set ``False`` when citations
+                are attached afterwards from chunk metadata -- the model then
+                spends no tokens on citations that would only be stripped, and
+                cannot invent a format the stripper has to chase.
         """
-        prompt = f"""Based on the following research paper excerpts, answer the question.
+        citation_rule = (
+            "4. Cite claims as [Paper Title, Year]."
+            if write_citations
+            else (
+                "4. Do NOT write citations, source names, or bracketed references. "
+                "Sources are attached automatically afterwards."
+            )
+        )
+        return f"""Answer the question using the research paper excerpts below.
 
 RESEARCH EXCERPTS:
 {context}
@@ -76,113 +126,75 @@ RESEARCH EXCERPTS:
 QUESTION: {question}
 
 INSTRUCTIONS:
-1. Answer ONLY based on the provided excerpts
-2. Be comprehensive but concise
-3. Include specific details and findings
-4. If excerpts don't fully answer the question, say so clearly
-5. Use citations in format [Paper Title, Year] after relevant claims
-
+1. Answer only from the excerpts above.
+2. Be comprehensive but concise.
+3. Include specific findings, numbers, and metrics where present.
+{citation_rule}
+5. If the excerpts do not answer the question, say so plainly and stop.
+{_MATH_RULE}
 ANSWER:"""
-        
-        return prompt
-    
+
     @staticmethod
     def build_extraction_prompt(text: str, extract_type: str = "key_findings") -> str:
-        """
-        Build information extraction prompt
-        
-        Args:
-            text: Source text
-            extract_type: What to extract ('key_findings', 'methodology', 'results')
-            
-        Returns:
-            Formatted prompt
-        """
-        extraction_guides = {
-            'key_findings': "Extract the main findings and conclusions.",
-            'methodology': "Extract the methodology, approach, or techniques used.",
-            'results': "Extract experimental results, metrics, and outcomes.",
-            'contributions': "Extract the key contributions and innovations."
+        """Pull one category of information out of a single passage."""
+        guides = {
+            "key_findings": "extract the main findings and conclusions.",
+            "methodology": "extract the methodology, approach, or techniques used.",
+            "results": "extract experimental results, metrics, and outcomes.",
+            "contributions": "extract the key contributions and innovations.",
         }
-        
-        guide = extraction_guides.get(extract_type, "Extract key information.")
-        
-        prompt = f"""From the following text, {guide}
+        guide = guides.get(extract_type, "extract the key information.")
+
+        return f"""From the text below, {guide}
+
+Report only what the text states. If it contains nothing relevant, reply
+exactly: NOTHING RELEVANT
 
 TEXT:
 {text}
 
 EXTRACTED INFORMATION:"""
-        
-        return prompt
-    
+
     @staticmethod
     def build_synthesis_prompt(
         question: str,
-        extractions: List[Dict],
-        max_length: int = 300
+        extractions: list[dict[str, Any]],
+        max_length: int = 300,
     ) -> str:
-        """
-        Build synthesis prompt from multiple extractions
-        
-        Args:
-            question: Original question
-            extractions: List of extracted information from different sources
-            max_length: Max words in response
-            
-        Returns:
-            Formatted prompt
-        """
-        # Format extractions
-        formatted_extractions = []
-        for i, ext in enumerate(extractions, 1):
-            source = ext.get('source', f'Source {i}')
-            content = ext.get('content', '')
-            formatted_extractions.append(f"Source {i} ({source}):\n{content}")
-        
-        extractions_text = "\n\n".join(formatted_extractions)
-        
-        prompt = f"""Synthesize the following information to answer the question.
+        """Merge per-source extractions into one answer."""
+        blocks = [
+            f"Source {index} ({item.get('source', f'Source {index}')}):\n"
+            f"{item.get('content', '')}"
+            for index, item in enumerate(extractions, 1)
+        ]
+        sources_text = "\n\n".join(blocks)
+
+        return f"""Synthesise the information below into a single answer.
 
 QUESTION: {question}
 
 INFORMATION FROM SOURCES:
-{extractions_text}
+{sources_text}
 
 INSTRUCTIONS:
-1. Combine information from all sources
-2. Create a coherent, unified answer
-3. Remove redundancy
-4. Keep answer under {max_length} words
-5. Maintain accuracy - only use provided information
+1. Combine the sources into one coherent answer.
+2. Remove redundancy but preserve specific numbers and terminology.
+3. Stay under {max_length} words.
+4. Use only the information above.
+5. If the sources do not answer the question, say so plainly.
 
-SYNTHESIZED ANSWER:"""
-        
-        return prompt
-    
+SYNTHESISED ANSWER:"""
+
     @staticmethod
-    def build_citation_prompt(text: str, sources: List[Dict]) -> str:
-        """
-        Build prompt to add citations to text
-        
-        Args:
-            text: Text needing citations
-            sources: List of source documents with metadata
-            
-        Returns:
-            Formatted prompt
-        """
-        # Format sources
-        formatted_sources = []
-        for i, source in enumerate(sources, 1):
-            title = source.get('title', 'Unknown')
-            year = source.get('year', 'n.d.')
-            author = source.get('author', 'Unknown')
-            formatted_sources.append(f"{i}. {title} ({author}, {year})")
-        
-        sources_text = "\n".join(formatted_sources)
-        
-        prompt = f"""Add proper citations to the following text using the provided sources.
+    def build_citation_prompt(text: str, sources: list[dict[str, Any]]) -> str:
+        """Add citations to an already-written answer."""
+        sources_text = "\n".join(
+            f"{index}. {source.get('title', 'Unknown')} "
+            f"({source.get('author', 'Unknown')}, {source.get('year', 'n.d.')})"
+            for index, source in enumerate(sources, 1)
+        )
+
+        return f"""Add citations to the text below using only the listed sources.
 
 TEXT TO CITE:
 {text}
@@ -191,30 +203,17 @@ AVAILABLE SOURCES:
 {sources_text}
 
 INSTRUCTIONS:
-1. Add citations after specific claims
-2. Use format: [Title, Year]
-3. Only cite claims that come from sources
-4. Don't cite general knowledge
-5. One citation per specific fact
+1. Cite specific claims as [Title, Year].
+2. Do not cite general knowledge.
+3. Never cite a source that is not listed above.
+4. Leave the wording otherwise unchanged.
 
 TEXT WITH CITATIONS:"""
-        
-        return prompt
-    
+
     @staticmethod
     def build_critique_prompt(question: str, answer: str, sources: str) -> str:
-        """
-        Build prompt for answer critique
-        
-        Args:
-            question: Original question
-            answer: Generated answer
-            sources: Source context
-            
-        Returns:
-            Formatted prompt
-        """
-        prompt = f"""Review and improve the following answer.
+        """Review a draft answer and produce a revision."""
+        return f"""Review and improve the answer below.
 
 QUESTION: {question}
 
@@ -225,147 +224,69 @@ SOURCES:
 {sources}
 
 REVIEW CHECKLIST:
-1. Accuracy: Does answer match sources?
-2. Completeness: Fully answers question?
-3. Clarity: Easy to understand?
-4. Citations: Properly formatted and placed?
-5. Coherence: Logical flow?
+1. Accuracy: does every claim match the sources?
+2. Completeness: is the question fully answered?
+3. Clarity: is it easy to follow?
+4. Citations: correctly formatted and placed?
 
-PROVIDE:
-1. Issues found (if any)
-2. Improved version of answer
+Write your review first. Then write the marker {IMPROVED_ANSWER_MARKER} on its
+own line, followed by the complete revised answer. Always include the marker,
+even when the answer needs no changes.
 
 REVIEW:"""
-        
-        return prompt
-    
+
     @staticmethod
     def build_literature_review_prompt(
         topic: str,
-        papers_summary: List[Dict],
-        max_length: int = 500
+        papers_summary: list[dict[str, Any]],
+        max_length: int = 500,
     ) -> str:
-        """
-        Build prompt for literature review generation
-        
-        Args:
-            topic: Research topic
-            papers_summary: Summaries of relevant papers
-            max_length: Max words
-            
-        Returns:
-            Formatted prompt
-        """
-        # Format paper summaries
-        formatted_papers = []
-        for i, paper in enumerate(papers_summary, 1):
-            title = paper.get('title', 'Unknown')
-            summary = paper.get('summary', '')
-            formatted_papers.append(f"{i}. {title}\n{summary}")
-        
-        papers_text = "\n\n".join(formatted_papers)
-        
-        prompt = f"""Generate a literature review on the topic: {topic}
+        """Write a literature review across several paper summaries."""
+        papers_text = "\n\n".join(
+            f"{index}. {paper.get('title', 'Unknown')} "
+            f"({paper.get('author', 'Unknown')}, {paper.get('year', 'n.d.')})\n"
+            f"{paper.get('summary', '')}"
+            for index, paper in enumerate(papers_summary, 1)
+        )
+
+        return f"""Write a literature review on: {topic}
 
 PAPERS:
 {papers_text}
 
 INSTRUCTIONS:
-1. Provide an overview of the research area
-2. Discuss main approaches and methodologies
-3. Compare and contrast different papers
-4. Identify trends and gaps
-5. Keep under {max_length} words
-6. Include citations
+1. Open with an overview of the research area.
+2. Discuss the main approaches and methodologies.
+3. Compare and contrast the papers.
+4. Identify trends and open gaps.
+5. Cite claims as [Title, Year].
+6. Stay under {max_length} words.
+7. Base the review only on the summaries above.
 
 LITERATURE REVIEW:"""
-        
-        return prompt
-    
+
     @staticmethod
     def build_comparison_prompt(
-        items: List[str],
+        items: list[str],
         context: str,
-        aspects: List[str] = None
+        aspects: list[str] | None = None,
     ) -> str:
-        """
-        Build prompt for comparing multiple items
-        
-        Args:
-            items: Items to compare (e.g., ["BERT", "GPT"])
-            context: Relevant context about items
-            aspects: Specific aspects to compare
-            
-        Returns:
-            Formatted prompt
-        """
-        items_text = " vs ".join(items)
-        
-        aspects_text = ""
-        if aspects:
-            aspects_text = f"\nCompare on these aspects: {', '.join(aspects)}"
-        
-        prompt = f"""Compare: {items_text}
+        """Compare two or more concepts using retrieved context."""
+        aspects_line = (
+            f"\nCompare specifically on: {', '.join(aspects)}" if aspects else ""
+        )
+
+        return f"""Compare: {" vs ".join(items)}
 
 CONTEXT:
 {context}
-{aspects_text}
+{aspects_line}
 
 INSTRUCTIONS:
-1. Compare similarities and differences
-2. Use specific details from context
-3. Organize comparison clearly
-4. Include citations for specific claims
+1. Cover both similarities and differences.
+2. Use specific details from the context.
+3. Organise the comparison clearly.
+4. Cite claims as [Title, Year].
+5. If the context lacks information on one item, say so rather than guessing.
 
 COMPARISON:"""
-        
-        return prompt
-
-
-def test_prompt_templates():
-    """Test prompt templates"""
-    
-    print("\n" + "="*80)
-    print("TESTING PROMPT TEMPLATES")
-    print("="*80)
-    
-    # Test QA prompt
-    print("\n1️⃣ Question-Answering Prompt:")
-    print("─" * 80)
-    qa_prompt = PromptTemplates.build_qa_prompt(
-        question="What is attention mechanism?",
-        context="[Source 1]: The attention mechanism computes weighted sums...\n[Source 2]: Attention allows models to focus..."
-    )
-    print(qa_prompt)
-    
-    # Test extraction prompt
-    print("\n2️⃣ Extraction Prompt:")
-    print("─" * 80)
-    ext_prompt = PromptTemplates.build_extraction_prompt(
-        text="This paper introduces BERT, a bidirectional transformer...",
-        extract_type="key_findings"
-    )
-    print(ext_prompt)
-    
-    # Test synthesis prompt
-    print("\n3️⃣ Synthesis Prompt:")
-    print("─" * 80)
-    synth_prompt = PromptTemplates.build_synthesis_prompt(
-        question="How does BERT work?",
-        extractions=[
-            {'source': 'BERT Paper', 'content': 'BERT uses masked language modeling...'},
-            {'source': 'Tutorial', 'content': 'BERT is pretrained on large corpora...'}
-        ]
-    )
-    print(synth_prompt)
-    
-    # Test system prompts
-    print("\n4️⃣ System Prompts:")
-    print("─" * 80)
-    for role, prompt in PromptTemplates.SYSTEM_PROMPTS.items():
-        print(f"\n{role.upper()}:")
-        print(prompt[:150] + "...")
-
-
-if __name__ == "__main__":
-    test_prompt_templates()

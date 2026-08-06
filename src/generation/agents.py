@@ -1,463 +1,295 @@
+"""Multi-agent answer generation.
+
+Four specialised stages run in sequence: extract from each chunk, synthesise
+into one answer, attach citations, then critique and revise.
+
+The pipeline issues roughly ``len(chunks) + 3`` LLM calls per question, so it
+is several times slower and costlier than single-shot generation. Whether that
+buys enough quality to justify the cost is exactly what the evaluation harness
+in Milestone 2 is meant to settle; until then it stays configurable.
 """
-Multi-Agent System Module
-Specialized AI agents for different generation tasks
-"""
 
-import sys
-from typing import List, Dict
-from pathlib import Path
+from __future__ import annotations
 
-sys.path.append(str(Path(__file__).parent.parent))
+from typing import Any
 
-from generation.llm_client import LLMClient
-from generation.prompt_templates import PromptTemplates
+from src.config import get_settings
+from src.exceptions import LLMAuthenticationError, LLMError
+from src.generation.llm_client import LLMClient
+from src.generation.prompt_templates import PromptTemplates
+from src.utils.logging import get_logger
+
+logger = get_logger(__name__)
 
 
 class BaseAgent:
-    """Base class for all agents"""
-    
-    def __init__(self, llm_client: LLMClient, role: str):
-        """
-        Initialize agent
-        
-        Args:
-            llm_client: LLM client instance
-            role: Agent role name
-        """
+    """Common behaviour for pipeline stages."""
+
+    role: str = "base"
+
+    def __init__(self, llm_client: LLMClient, temperature: float | None = None):
         self.llm = llm_client
-        self.role = role
-        self.system_prompt = PromptTemplates.SYSTEM_PROMPTS.get(role, "")
-    
-    def process(self, input_data: Dict) -> Dict:
-        """
-        Process input (to be overridden by subclasses)
-        
-        Args:
-            input_data: Input dictionary
-            
-        Returns:
-            Output dictionary
-        """
+        self.temperature = temperature
+        self.system_prompt = PromptTemplates.SYSTEM_PROMPTS.get(self.role, "")
+
+    def process(self, input_data: dict[str, Any]) -> dict[str, Any]:
         raise NotImplementedError("Subclasses must implement process()")
+
+    def _generate(self, prompt: str) -> str:
+        """Call the LLM with this agent's role and temperature."""
+        return self.llm.generate(
+            prompt=prompt,
+            system_prompt=self.system_prompt,
+            temperature=self.temperature,
+        )
 
 
 class AnalyzerAgent(BaseAgent):
-    """Agent for analyzing and extracting information from text"""
-    
-    def __init__(self, llm_client: LLMClient):
-        super().__init__(llm_client, 'analyzer')
-        print("   📊 Analyzer Agent initialized")
-    
-    def process(self, input_data: Dict) -> Dict:
+    """Extract the salient claims from each retrieved chunk."""
+
+    role = "analyzer"
+
+    def process(self, input_data: dict[str, Any]) -> dict[str, Any]:
+        """Summarise each chunk down to its key findings.
+
+        A chunk that fails to process is skipped, since the remaining chunks
+        can still support an answer. Authentication failures are re-raised
+        immediately: they will affect every chunk, so continuing wastes time
+        and produces a misleadingly empty result.
         """
-        Extract key information from chunks
-        
-        Args:
-            input_data: {
-                'chunks': List of text chunks,
-                'query': Original question
-            }
-            
-        Returns:
-            {'extractions': List of extracted information}
-        """
-        chunks = input_data.get('chunks', [])
-        query = input_data.get('query', '')
-        
-        print(f"\n   📊 Analyzing {len(chunks)} chunks...")
-        
-        extractions = []
-        for i, chunk in enumerate(chunks, 1):
-            # Build extraction prompt
-            prompt = PromptTemplates.build_extraction_prompt(
-                text=chunk.get('text', ''),
-                extract_type='key_findings'
-            )
-            
-            # Extract information
-            try:
-                extraction = self.llm.generate(
-                    prompt=prompt,
-                    system_prompt=self.system_prompt,
-                    temperature=0.3  # Lower for factual extraction
-                )
-                
-                extractions.append({
-                    'chunk_id': chunk.get('id'),
-                    'source': chunk.get('metadata', {}).get('title', f'Source {i}'),
-                    'content': extraction,
-                    'original_text': chunk.get('text', '')
-                })
-                
-            except Exception as e:
-                error_msg = str(e)
-                # Re-raise critical API errors instead of silently failing
-                if 'PermissionDenied' in error_msg or 'API' in error_msg or 'key' in error_msg.lower():
-                    raise Exception(f"LLM API Error: {error_msg}") from e
-                print(f"      ⚠️ Error analyzing chunk {i}: {error_msg}")
+        chunks: list[dict[str, Any]] = input_data.get("chunks", [])
+        query: str = input_data.get("query", "")
+
+        extractions: list[dict[str, Any]] = []
+        for index, chunk in enumerate(chunks, 1):
+            text = chunk.get("text", "")
+            if not text.strip():
                 continue
-        
-        print(f"   ✅ Extracted information from {len(extractions)} chunks")
-        
-        return {
-            'extractions': extractions,
-            'query': query
-        }
+
+            prompt = PromptTemplates.build_extraction_prompt(
+                text=text, extract_type="key_findings"
+            )
+            try:
+                content = self._generate(prompt)
+            except LLMAuthenticationError:
+                raise
+            except LLMError as exc:
+                logger.warning("Skipping chunk %d: %s", index, exc)
+                continue
+
+            metadata = chunk.get("metadata", {})
+            extractions.append(
+                {
+                    "chunk_id": chunk.get("id"),
+                    "source": metadata.get("title") or f"Source {index}",
+                    "author": metadata.get("author", "Unknown"),
+                    "year": metadata.get("year", "n.d."),
+                    "section": metadata.get("section_title", "Unknown"),
+                    "content": content,
+                    "original_text": text,
+                }
+            )
+
+        logger.info("Analyzer extracted from %d/%d chunks", len(extractions), len(chunks))
+        return {"extractions": extractions, "query": query}
 
 
 class SynthesizerAgent(BaseAgent):
-    """Agent for synthesizing information into coherent answers"""
-    
-    def __init__(self, llm_client: LLMClient):
-        super().__init__(llm_client, 'synthesizer')
-        print("   🧬 Synthesizer Agent initialized")
-    
-    def process(self, input_data: Dict) -> Dict:
-        """
-        Synthesize extracted information into answer
-        
-        Args:
-            input_data: {
-                'extractions': List of extractions,
-                'query': Original question
-            }
-            
-        Returns:
-            {'answer': Synthesized answer}
-        """
-        extractions = input_data.get('extractions', [])
-        query = input_data.get('query', '')
-        
-        print(f"\n   🧬 Synthesizing information...")
-        
+    """Merge per-chunk extractions into one coherent answer."""
+
+    role = "synthesizer"
+
+    def process(self, input_data: dict[str, Any]) -> dict[str, Any]:
+        extractions: list[dict[str, Any]] = input_data.get("extractions", [])
+        query: str = input_data.get("query", "")
+
         if not extractions:
-            return {'answer': "No information available to answer the question."}
-        
-        # Build synthesis prompt
-        prompt = PromptTemplates.build_synthesis_prompt(
-            question=query,
-            extractions=extractions,
-            max_length=300
-        )
-        
-        # Generate synthesis
-        try:
-            answer = self.llm.generate(
-                prompt=prompt,
-                system_prompt=self.system_prompt,
-                temperature=0.5  # Balanced creativity
-            )
-            
-            print(f"   ✅ Generated synthesized answer ({len(answer)} chars)")
-            
             return {
-                'answer': answer,
-                'query': query,
-                'extractions': extractions
+                "answer": "",
+                "query": query,
+                "extractions": [],
+                "error": "no extractions to synthesise",
             }
-            
-        except Exception as e:
-            print(f"   ❌ Error synthesizing: {str(e)}")
-            return {'answer': "Error generating answer.", 'error': str(e)}
+
+        prompt = PromptTemplates.build_synthesis_prompt(
+            question=query, extractions=extractions
+        )
+        answer = self._generate(prompt)
+
+        logger.info("Synthesised answer (%d chars)", len(answer))
+        return {"answer": answer, "query": query, "extractions": extractions}
 
 
 class CitationAgent(BaseAgent):
-    """Agent for adding proper citations"""
-    
-    def __init__(self, llm_client: LLMClient):
-        super().__init__(llm_client, 'citation_agent')
-        print("   📚 Citation Agent initialized")
-    
-    def process(self, input_data: Dict) -> Dict:
+    """Attach source citations to the synthesised answer."""
+
+    role = "citation_agent"
+
+    def process(self, input_data: dict[str, Any]) -> dict[str, Any]:
+        """Add citations, falling back to the uncited answer on failure.
+
+        Losing citations degrades the answer but does not invalidate it, so
+        this stage never fails the request.
         """
-        Add citations to answer
-        
-        Args:
-            input_data: {
-                'answer': Text to cite,
-                'extractions': Source information
+        answer: str = input_data.get("answer", "")
+        extractions: list[dict[str, Any]] = input_data.get("extractions", [])
+
+        if not answer.strip() or not extractions:
+            return {"cited_answer": answer, "sources": []}
+
+        sources = [
+            {
+                "title": extraction.get("source", "Unknown"),
+                "author": extraction.get("author", "Unknown"),
+                "year": extraction.get("year", "n.d."),
             }
-            
-        Returns:
-            {'cited_answer': Answer with citations}
-        """
-        answer = input_data.get('answer', '')
-        extractions = input_data.get('extractions', [])
-        
-        print(f"\n   📚 Adding citations...")
-        
-        if not extractions:
-            return {'cited_answer': answer}
-        
-        # Prepare source information
-        sources = []
-        for ext in extractions:
-            source_info = {
-                'title': ext.get('source', 'Unknown'),
-                'year': ext.get('year', 'n.d.'),
-                'author': ext.get('author', 'Unknown')
-            }
-            sources.append(source_info)
-        
-        # Build citation prompt
-        prompt = PromptTemplates.build_citation_prompt(
-            text=answer,
-            sources=sources
-        )
-        
-        # Add citations
+            for extraction in extractions
+        ]
+
         try:
-            cited_answer = self.llm.generate(
-                prompt=prompt,
-                system_prompt=self.system_prompt,
-                temperature=0.2  # Very factual
+            cited = self._generate(
+                PromptTemplates.build_citation_prompt(text=answer, sources=sources)
             )
-            
-            print(f"   ✅ Citations added")
-            
-            return {
-                'cited_answer': cited_answer,
-                'sources': sources
-            }
-            
-        except Exception as e:
-            print(f"   ⚠️ Error adding citations: {str(e)}")
-            return {'cited_answer': answer}
+        except LLMError as exc:
+            logger.warning("Citation stage failed, returning uncited answer: %s", exc)
+            return {"cited_answer": answer, "sources": sources}
+
+        return {"cited_answer": cited, "sources": sources}
 
 
 class CriticAgent(BaseAgent):
-    """Agent for critiquing and improving answers"""
-    
-    def __init__(self, llm_client: LLMClient):
-        super().__init__(llm_client, 'critic')
-        print("   🔍 Critic Agent initialized")
-    
-    def process(self, input_data: Dict) -> Dict:
-        """
-        Critique and improve answer
-        
-        Args:
-            input_data: {
-                'answer': Current answer,
-                'query': Original question,
-                'sources': Source context
-            }
-            
-        Returns:
-            {'improved_answer': Improved answer, 'critique': Critique notes}
-        """
-        answer = input_data.get('answer', '')
-        query = input_data.get('query', '')
-        sources = input_data.get('sources', '')
-        
-        print(f"\n   🔍 Critiquing answer...")
-        
-        # Build critique prompt
-        prompt = PromptTemplates.build_critique_prompt(
-            question=query,
-            answer=answer,
-            sources=str(sources)
-        )
-        
-        # Generate critique
+    """Review the answer and return a revised version."""
+
+    role = "critic"
+
+    def process(self, input_data: dict[str, Any]) -> dict[str, Any]:
+        """Critique and revise, falling back to the input answer on failure."""
+        answer: str = input_data.get("answer", "")
+        query: str = input_data.get("query", "")
+        sources: Any = input_data.get("sources", "")
+
+        if not answer.strip():
+            return {"improved_answer": answer, "critique": ""}
+
         try:
-            critique_response = self.llm.generate(
-                prompt=prompt,
-                system_prompt=self.system_prompt,
-                temperature=0.4
+            response = self._generate(
+                PromptTemplates.build_critique_prompt(
+                    question=query, answer=answer, sources=str(sources)
+                )
             )
-            
-            # Try to extract improved answer (simple parsing)
-            improved_answer = answer  # Default to original
-            critique_notes = critique_response
-            
-            # Look for "IMPROVED:" or similar markers
-            if "IMPROVED" in critique_response:
-                parts = critique_response.split("IMPROVED")
-                if len(parts) > 1:
-                    improved_answer = parts[1].strip()
-                    critique_notes = parts[0].strip()
-            
-            print(f"   ✅ Critique complete")
-            
-            return {
-                'improved_answer': improved_answer,
-                'critique': critique_notes,
-                'original_answer': answer
-            }
-            
-        except Exception as e:
-            print(f"   ⚠️ Error critiquing: {str(e)}")
-            return {'improved_answer': answer, 'critique': ''}
+        except LLMError as exc:
+            logger.warning("Critique stage failed, keeping original answer: %s", exc)
+            return {"improved_answer": answer, "critique": ""}
+
+        improved, critique = self._split_critique(response, fallback=answer)
+        return {"improved_answer": improved, "critique": critique, "original_answer": answer}
+
+    @staticmethod
+    def _split_critique(response: str, fallback: str) -> tuple[str, str]:
+        """Separate the revised answer from the critique notes.
+
+        The prompt asks for an ``IMPROVED ANSWER:`` marker. Models comply
+        inconsistently, so a missing marker keeps the original answer rather
+        than passing the whole critique off as the answer.
+        """
+        for marker in ("IMPROVED ANSWER:", "IMPROVED VERSION:", "IMPROVED:"):
+            if marker in response:
+                critique, _, improved = response.partition(marker)
+                improved = improved.strip()
+                if improved:
+                    return improved, critique.strip()
+        return fallback, response.strip()
 
 
 class AgentOrchestrator:
-    """Orchestrates multiple agents in a workflow"""
-    
-    def __init__(self, llm_client: LLMClient = None):
-        """
-        Initialize orchestrator
-        
-        Args:
-            llm_client: LLM client (creates new if None)
-        """
-        print("\n🎭 Initializing Multi-Agent System...")
-        print("="*60)
-        
-        # Initialize LLM client
-        if llm_client is None:
-            self.llm = LLMClient(provider='groq')
-        else:
-            self.llm = llm_client
-        
-        # Initialize agents
-        self.agents = {
-            'analyzer': AnalyzerAgent(self.llm),
-            'synthesizer': SynthesizerAgent(self.llm),
-            'citation': CitationAgent(self.llm),
-            'critic': CriticAgent(self.llm)
-        }
-        
-        print("="*60)
-        print("✅ Multi-Agent System Ready!")
-    
+    """Run the four-stage generation pipeline."""
+
+    def __init__(self, llm_client: LLMClient | None = None):
+        settings = get_settings()
+        self.llm = llm_client or LLMClient()
+
+        self.analyzer = AnalyzerAgent(self.llm, settings.analyzer_temperature)
+        self.synthesizer = SynthesizerAgent(self.llm, settings.synthesizer_temperature)
+        self.citation = CitationAgent(self.llm, settings.citation_temperature)
+        self.critic = CriticAgent(self.llm, settings.critic_temperature)
+
+        logger.debug("Multi-agent orchestrator ready")
+
     def generate_answer(
         self,
         query: str,
-        chunks: List[Dict],
+        chunks: list[dict[str, Any]],
         use_citations: bool = True,
-        use_critique: bool = True
-    ) -> Dict:
-        """
-        Generate answer using multi-agent workflow
-        
+        use_critique: bool = True,
+    ) -> dict[str, Any]:
+        """Produce an answer from retrieved chunks.
+
         Args:
-            query: User question
-            chunks: Retrieved chunks
-            use_citations: Whether to add citations
-            use_critique: Whether to critique/improve
-            
+            query: The user's question.
+            chunks: Retrieved chunks, each with ``text`` and ``metadata``.
+            use_citations: Run the citation stage.
+            use_critique: Run the critique stage.
+
         Returns:
-            Complete answer with metadata
+            The answer plus per-stage bookkeeping under ``stages``.
         """
-        print(f"\n{'='*80}")
-        print(f"GENERATING ANSWER: {query}")
-        print(f"{'='*80}")
-        
-        # Stage 1: Analyze chunks
-        analysis_result = self.agents['analyzer'].process({
-            'chunks': chunks,
-            'query': query
-        })
-        
-        # Stage 2: Synthesize answer
-        synthesis_result = self.agents['synthesizer'].process({
-            'extractions': analysis_result['extractions'],
-            'query': query
-        })
-        
-        answer = synthesis_result['answer']
-        
-        # Stage 3: Add citations (optional)
+        stages: list[str] = []
+
+        analysis = self.analyzer.process({"chunks": chunks, "query": query})
+        stages.append("analyze")
+        extractions = analysis["extractions"]
+
+        if not extractions:
+            return {
+                "answer": (
+                    "I could not extract usable information from the retrieved "
+                    "passages. This usually means the LLM provider is failing; "
+                    "check the logs for details."
+                ),
+                "query": query,
+                "sources": [],
+                "num_chunks": len(chunks),
+                "stages": stages,
+                "error": "analyzer produced no extractions",
+            }
+
+        synthesis = self.synthesizer.process({"extractions": extractions, "query": query})
+        stages.append("synthesize")
+        answer = synthesis["answer"]
+
         if use_citations:
-            citation_result = self.agents['citation'].process({
-                'answer': answer,
-                'extractions': analysis_result['extractions']
-            })
-            answer = citation_result.get('cited_answer', answer)
-        
-        # Stage 4: Critique and improve (optional)
+            citation_result = self.citation.process(
+                {"answer": answer, "extractions": extractions}
+            )
+            answer = citation_result.get("cited_answer") or answer
+            stages.append("cite")
+
+        critique = ""
         if use_critique:
-            critique_result = self.agents['critic'].process({
-                'answer': answer,
-                'query': query,
-                'sources': analysis_result['extractions']
-            })
-            answer = critique_result.get('improved_answer', answer)
-        
-        print(f"\n{'='*80}")
-        print("✅ ANSWER GENERATION COMPLETE")
-        print(f"{'='*80}\n")
-        
+            critique_result = self.critic.process(
+                {"answer": answer, "query": query, "sources": extractions}
+            )
+            answer = critique_result.get("improved_answer") or answer
+            critique = critique_result.get("critique", "")
+            stages.append("critique")
+
+        logger.info("Multi-agent generation complete (stages: %s)", ", ".join(stages))
         return {
-            'answer': answer,
-            'query': query,
-            'sources': analysis_result['extractions'],
-            'num_chunks': len(chunks)
+            "answer": answer,
+            "query": query,
+            "sources": extractions,
+            "num_chunks": len(chunks),
+            "stages": stages,
+            "critique": critique,
         }
-    
+
     def simple_generate(self, query: str, context: str) -> str:
+        """Single-shot generation: one LLM call over the whole context.
+
+        The baseline the multi-agent pipeline must beat to justify its cost.
         """
-        Simple generation without multi-agent (faster)
-        
-        Args:
-            query: User question
-            context: Retrieved context
-            
-        Returns:
-            Answer string
-        """
-        prompt = PromptTemplates.build_qa_prompt(query, context)
-        
-        answer = self.llm.generate(
-            prompt=prompt,
-            system_prompt="You are a helpful research assistant.",
-            temperature=0.5
+        return self.llm.generate(
+            prompt=PromptTemplates.build_qa_prompt(query, context),
+            system_prompt=PromptTemplates.SYSTEM_PROMPTS["qa"],
+            temperature=get_settings().synthesizer_temperature,
         )
-        
-        return answer
-
-
-def test_agents():
-    """Test multi-agent system"""
-    
-    # Mock chunks
-    mock_chunks = [
-        {
-            'id': 'chunk_1',
-            'text': 'The attention mechanism allows transformers to focus on relevant parts of the input sequence. It computes weighted sums of values.',
-            'metadata': {'title': 'Attention Is All You Need', 'author': 'Vaswani et al.', 'year': '2017'}
-        },
-        {
-            'id': 'chunk_2',
-            'text': 'Self-attention enables parallel processing and captures long-range dependencies better than RNNs.',
-            'metadata': {'title': 'Transformer Tutorial', 'author': 'Smith', 'year': '2020'}
-        }
-    ]
-    
-    query = "What is attention mechanism in transformers?"
-    
-    print("\n" + "="*80)
-    print("TESTING MULTI-AGENT SYSTEM")
-    print("="*80)
-    
-    try:
-        # Initialize orchestrator
-        orchestrator = AgentOrchestrator()
-        
-        # Generate answer
-        result = orchestrator.generate_answer(
-            query=query,
-            chunks=mock_chunks,
-            use_citations=True,
-            use_critique=True
-        )
-        
-        # Display result
-        print("\nFINAL ANSWER:")
-        print("─" * 80)
-        print(result['answer'])
-        print("─" * 80)
-        print(f"\nSources used: {result['num_chunks']}")
-        
-        print("\n✅ Test complete!")
-        
-    except Exception as e:
-        print(f"\n❌ Error: {str(e)}")
-        print("\nMake sure:")
-        print("1. GROQ_API_KEY is set in .env")
-        print("2. You have internet connection")
-
-
-if __name__ == "__main__":
-    test_agents()

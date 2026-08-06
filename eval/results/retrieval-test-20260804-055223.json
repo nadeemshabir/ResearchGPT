@@ -1,0 +1,89 @@
+{
+  "dataset": "BEIR/scifact:test",
+  "num_queries": 300,
+  "num_documents": 5183,
+  "embedding_model": "all-MiniLM-L6-v2",
+  "chunk_size": 1000,
+  "candidate_k": 50,
+  "generated_at": "2026-08-04T05:52:23.466911+00:00",
+  "results": [
+    {
+      "name": "hybrid_minmax_rerank",
+      "description": "Hybrid weighted 0.7/0.3 (minmax) + rerank",
+      "config": {
+        "name": "hybrid_minmax_rerank",
+        "method": "hybrid",
+        "semantic_weight": 0.7,
+        "keyword_weight": 0.3,
+        "fusion": "weighted",
+        "normalisation": "minmax",
+        "rrf_k": 60,
+        "rerank": true,
+        "candidate_k": 50,
+        "top_k": 10
+      },
+      "num_queries": 300,
+      "metrics": {
+        "hit@1": 0.58,
+        "hit@10": 0.84,
+        "hit@3": 0.72,
+        "hit@5": 0.7633,
+        "mrr": 0.6629,
+        "ndcg@1": 0.58,
+        "ndcg@10": 0.6948,
+        "ndcg@3": 0.6442,
+        "ndcg@5": 0.6653,
+        "precision@1": 0.58,
+        "precision@10": 0.093,
+        "precision@3": 0.2489,
+        "precision@5": 0.164,
+        "recall@1": 0.5509,
+        "recall@10": 0.8272,
+        "recall@3": 0.6916,
+        "recall@5": 0.7416
+      },
+      "mean_latency_ms": 3362.3,
+      "p95_latency_ms": 4998.3,
+      "total_seconds": 1008.7
+    },
+    {
+      "name": "rrf_rerank",
+      "description": "Hybrid RRF (k=60, w=0.7/0.3) + rerank",
+      "config": {
+        "name": "rrf_rerank",
+        "method": "hybrid",
+        "semantic_weight": 0.7,
+        "keyword_weight": 0.3,
+        "fusion": "rrf",
+        "normalisation": "minmax",
+        "rrf_k": 60,
+        "rerank": true,
+        "candidate_k": 50,
+        "top_k": 10
+      },
+      "num_queries": 300,
+      "metrics": {
+        "hit@1": 0.5733,
+        "hit@10": 0.8433,
+        "hit@3": 0.72,
+        "hit@5": 0.76,
+        "mrr": 0.6594,
+        "ndcg@1": 0.5733,
+        "ndcg@10": 0.6935,
+        "ndcg@3": 0.6418,
+        "ndcg@5": 0.6621,
+        "precision@1": 0.5733,
+        "precision@10": 0.0933,
+        "precision@3": 0.25,
+        "precision@5": 0.164,
+        "recall@1": 0.5469,
+        "recall@10": 0.8306,
+        "recall@3": 0.6906,
+        "recall@5": 0.7389
+      },
+      "mean_latency_ms": 6064.2,
+      "p95_latency_ms": 9882.2,
+      "total_seconds": 1819.3
+    }
+  ]
+}
