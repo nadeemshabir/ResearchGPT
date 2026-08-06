@@ -238,12 +238,16 @@ class TextChunker:
         if not stripped or len(stripped) > _MAX_HEADER_LINE_LENGTH:
             return None
 
-        without_number = _SECTION_NUMBER.sub("", stripped)
-        candidate = without_number.lower().rstrip(":.").strip()
+        # Trailing punctuation is stripped for both matching *and* the returned
+        # title. Normalising only for the match would make "Introduction" and
+        # "Introduction:" two distinct section titles for the same section,
+        # fragmenting labels across papers that punctuate differently.
+        without_number = _SECTION_NUMBER.sub("", stripped).rstrip(":.").strip()
+        candidate = without_number.lower()
 
         for header in SECTION_HEADERS:
             if candidate == header or candidate.startswith(header + " "):
-                return without_number.strip() or header.title()
+                return without_number or header.title()
         return None
 
     @staticmethod

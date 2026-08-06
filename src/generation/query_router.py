@@ -89,7 +89,11 @@ _COMPARISON_PATTERNS = tuple(
 _REVIEW_PATTERNS = tuple(
     re.compile(p) for p in (
         r"\b(review|overview|survey)\b",
-        r"\b(summarize|summarise|summary)\s+(all|the)\b",
+        # "all" is what makes this multi-document. "Summarize the main
+        # findings" is a single summary and belongs to _SUMMARY_PATTERNS;
+        # matching "the" here stole every such query, because review is
+        # evaluated first.
+        r"\b(summarize|summarise|summary)\s+(?:of\s+)?all\b",
         r"\bliterature review\b",
         r"\bstate of (the )?art\b",
         r"\bcurrent research\b",
@@ -130,6 +134,20 @@ _SUMMARY_PATTERNS = tuple(
     )
 )
 
+#: Weight per matching pattern, per family.
+#:
+#: Each family's weight equals its threshold in :data:`ROUTE_THRESHOLDS`, so a
+#: single unambiguous phrase is enough to route. It was previously *below* the
+#: threshold -- 0.5 against 0.7 for extraction -- which required two patterns to
+#: match at once. Since the patterns within a family are alternative phrasings
+#: of the same intent, they rarely co-occur, and extraction never fired at all:
+#: "Extract the evaluation metrics" and "List all the datasets" both fell
+#: through to plain Q&A. Additional matches still accumulate and raise
+#: confidence, capped at 1.0.
+_REVIEW_PATTERN_WEIGHT = 0.7
+_EXTRACTION_PATTERN_WEIGHT = 0.7
+_SUMMARY_PATTERN_WEIGHT = 0.6
+
 _COMPARISON_KEYWORDS = frozenset(
     {"compare", "comparison", "versus", "vs", "difference", "different",
      "differ", "contrast", "similar", "similarity", "better", "worse"}
@@ -141,9 +159,16 @@ _REVIEW_KEYWORDS = frozenset(
 )
 
 #: Words that look like proper nouns but are never the subject of a comparison.
+#:
+#: Item extraction keys off capitalisation, so any word starting a sentence
+#: looks like a named entity. Without the imperatives below, "Tell me about
+#: BERT" extracted ["Tell", "BERT"] and scored as a two-item comparison.
 _ITEM_STOPWORDS = frozenset(
     {"What", "Which", "How", "Why", "When", "Where", "Who", "Compare",
-     "Contrast", "Explain", "Describe", "The", "This", "That", "These"}
+     "Contrast", "Explain", "Describe", "The", "This", "That", "These",
+     "Tell", "Give", "Show", "Find", "List", "Summarize", "Summarise",
+     "Provide", "Discuss", "Identify", "Extract", "Enumerate", "Define",
+     "Review", "Overview", "Does", "Did", "Is", "Are", "Can", "Should"}
 )
 
 _TOPIC_NOISE = (
@@ -201,7 +226,7 @@ class QueryRouter:
         )
 
     def _score_review(self, query: str, normalised: str) -> RoutingDecision:
-        confidence = sum(0.4 for p in _REVIEW_PATTERNS if p.search(normalised))
+        confidence = sum(_REVIEW_PATTERN_WEIGHT for p in _REVIEW_PATTERNS if p.search(normalised))
         matched = sum(1 for kw in _REVIEW_KEYWORDS if kw in normalised.split())
         confidence += min(matched * 0.15, 0.4)
 
@@ -214,7 +239,9 @@ class QueryRouter:
 
     @staticmethod
     def _score_extraction(query: str, normalised: str) -> RoutingDecision:
-        confidence = sum(0.5 for p in _EXTRACTION_PATTERNS if p.search(normalised))
+        confidence = sum(
+            _EXTRACTION_PATTERN_WEIGHT for p in _EXTRACTION_PATTERNS if p.search(normalised)
+        )
         return RoutingDecision(
             query_type=QueryType.EXTRACTION,
             method="answer_question",
@@ -224,7 +251,9 @@ class QueryRouter:
 
     @staticmethod
     def _score_summary(query: str, normalised: str) -> RoutingDecision:
-        confidence = sum(0.4 for p in _SUMMARY_PATTERNS if p.search(normalised))
+        confidence = sum(
+            _SUMMARY_PATTERN_WEIGHT for p in _SUMMARY_PATTERNS if p.search(normalised)
+        )
         return RoutingDecision(
             query_type=QueryType.SUMMARY,
             method="answer_question",
