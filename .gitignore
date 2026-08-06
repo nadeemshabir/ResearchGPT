@@ -53,3 +53,10 @@ eval/results/*.log
 
 # Saved chat transcripts
 chat_history_*.txt
+
+# Frontend build output and dependencies. The bundle is produced by
+# `npm run build` (and by the Dockerfile), so committing it would mean two
+# sources of truth for the same files.
+node_modules/
+static/
+*.tsbuildinfo

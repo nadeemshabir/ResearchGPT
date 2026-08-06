@@ -3,15 +3,17 @@
 from __future__ import annotations
 
 import time
+from dataclasses import asdict
 from typing import Any
 
 from src.config import get_settings
 from src.exceptions import LLMError, NoRelevantContextError
 from src.generation.agents import AgentOrchestrator
-from src.generation.citation_manager import CitationManager
+from src.generation.citation_manager import CitationManager, ParagraphAttribution
 from src.generation.llm_client import LLMClient
 from src.generation.prompt_templates import PromptTemplates
 from src.generation.query_router import QueryRouter, QueryType
+from src.generation.refusal_detection import looks_like_refusal
 from src.retrieval.retrieval_system import RetrievalSystem
 from src.utils.logging import get_logger
 
@@ -130,10 +132,15 @@ class AnswerGenerator:
                 "metadata": {
                     "refused": True,
                     "reason": "no_relevant_context",
+                    # Named rather than left absent: callers reading
+                    # generation_method would otherwise see "unknown" and be
+                    # unable to tell a retrieval refusal from a missing field.
+                    "generation_method": "refused_at_retrieval",
                     "candidates_considered": exc.candidates_considered,
                     "threshold": exc.threshold,
                     "num_sources": 0,
                     "processing_time": round(time.perf_counter() - started, 2),
+                    "model": self.llm_client.model,
                 },
             }
 
@@ -171,17 +178,28 @@ class AnswerGenerator:
 
         generation_seconds = time.perf_counter() - generation_started
 
-        if self.citation_manager and self.use_deterministic_citations:
+        # Retrieval refuses by raising; the model refuses in prose. Both are
+        # correct refusals, but only the first used to be recorded, so silent
+        # refusals were counted as fabricated answers.
+        model_refused = looks_like_refusal(answer)
+
+        attributions: list[ParagraphAttribution] = []
+        if self.citation_manager and self.use_deterministic_citations and not model_refused:
             # Attach citations from chunk metadata rather than trusting the
             # model to write them. Sources come from a fixed list, so this
             # cannot fabricate a reference.
-            answer = self.citation_manager.add_paragraph_citations(answer, chunks)
+            #
+            # Attribution runs once and both outputs derive from it: the
+            # rendered string for readers, and the structure for clients that
+            # need to link a claim back to the passage behind it.
+            attributions = self.citation_manager.attribute_paragraphs(answer, chunks)
+            answer = self._render_attributions(attributions)
             stages = [*stages, "paragraph_citations"]
 
         total_seconds = time.perf_counter() - started
 
         metadata: dict[str, Any] = {
-            "refused": False,
+            "refused": model_refused,
             "num_sources": len(chunks),
             "processing_time": round(total_seconds, 2),
             "retrieval_time": round(
@@ -215,8 +233,61 @@ class AnswerGenerator:
             "answer": answer,
             "question": question,
             "sources": self._format_sources(chunks) if include_sources else [],
+            # Paragraph-to-chunk links, so a client can highlight the passage
+            # behind a claim without parsing the rendered citations back out.
+            "paragraphs": [
+                {
+                    "text": item.text,
+                    "structural": item.structural,
+                    "sources": [asdict(source) for source in item.sources],
+                }
+                for item in attributions
+            ],
+            "chunks": self._chunk_records(chunks) if include_sources else [],
             "metadata": metadata,
         }
+
+    @staticmethod
+    def _render_attributions(attributions: list[ParagraphAttribution]) -> str:
+        """Rebuild the answer text with one citation group per paragraph."""
+        manager = CitationManager()
+        rendered: list[str] = []
+        for paragraph in attributions:
+            if not paragraph.sources:
+                rendered.append(paragraph.text)
+                continue
+            group = " ".join(
+                manager.format_citation(
+                    {"title": source.title, "year": source.year, "author": "Unknown"}
+                )
+                for source in paragraph.sources
+            )
+            rendered.append(f"{paragraph.text} {manager.merge_duplicate_citations(group)}")
+        return "\n\n".join(rendered)
+
+    @staticmethod
+    def _chunk_records(chunks: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Full passages, keyed by the ids that appear in ``paragraphs``.
+
+        The whole chunk text is returned, not a preview: a client highlighting
+        a source needs the passage a reader will actually read.
+        """
+        records: list[dict[str, Any]] = []
+        for chunk in chunks:
+            metadata = chunk.get("metadata", {}) or {}
+            records.append(
+                {
+                    "chunk_id": str(chunk.get("id", "")),
+                    "paper_id": metadata.get("paper_id", "unknown"),
+                    "title": metadata.get("title") or metadata.get("paper_id") or "Unknown",
+                    "section": metadata.get("section_title", "Unknown"),
+                    "text": chunk.get("text", ""),
+                    "relevance_score": round(
+                        float(chunk.get("rerank_score", chunk.get("hybrid_score", 0.0))), 4
+                    ),
+                }
+            )
+        return records
 
     def smart_answer(self, user_query: str, **kwargs: Any) -> dict[str, Any]:
         """Route the query, then answer with the matching strategy.

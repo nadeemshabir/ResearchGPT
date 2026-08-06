@@ -132,11 +132,54 @@ You have 8 commits and one is named `a`. You can't rewrite what's pushed without
 
 ---
 
-# Milestone 2 — Measure everything (~2 weeks) ⭐
+# Milestone 2 — Measure everything (~2 weeks) ⭐ DONE
 
 **This is the milestone that makes the project resume-worthy.** Everything else is table stakes; this is the part that 95% of portfolio RAG projects do not have. Give it the most time.
 
 The premise: you built hybrid search and cross-encoder reranking. **You currently have no idea whether either of them helps.** Find out, and publish the numbers.
+
+## Outcome
+
+19 findings, all in [`docs/EVALUATION.md`](docs/EVALUATION.md). Three defaults changed on measured evidence, and one metric family was withdrawn after failing calibration.
+
+| Area | Result | Trust |
+|---|---|---|
+| Retrieval | BEIR/SciFact, 300 queries, expert labels | **High** |
+| Weights 0.7/0.3 → 0.5/0.5 | +0.010 nDCG@10 | High |
+| Reranking on → off | 28× latency for +0.0075 nDCG, *lower* Recall@5 | High |
+| Citations | rate 1.0000, coverage 0.9225, **0** fabrications | High — counted in code |
+| Refusal | 23/23 unanswerable refused, 1/15 false refusal | Moderate — n=23, partly self-graded |
+| RAGAS scores | **Withdrawn.** κ = −0.195; 13 of 23 answers scored exactly 1.0 | None |
+
+**Eight of the nineteen findings were bugs in the evaluation code, not the system**, and twice a failure was being scored as a success. That ratio is the most honest thing in the document and the best interview material in the project.
+
+## What is deliberately left open
+
+- **The judge needs ~30 more grades**, weighted toward answers it scored *low*. The first sample was spread evenly across the range — correct for an unbiased look, but it left only 3 usable negatives.
+- **The test set contains questions built from example prompts inside papers** (a `list C` code sample from InstructGPT; a Joaquin Phoenix red-carpet question from GPT-3's generated-news figures). Those are not questions about the papers. Filtering them is a small change to `eval/testset.py` and would improve both evaluation and calibration.
+- **The multi-agent pipeline is unjustified, not disproven.** See below.
+
+## Decision needed: is the 4-call multi-agent pipeline worth keeping?
+
+| | multi-agent | single-shot + deterministic citations |
+|---|---|---|
+| LLM calls per answer | **4** | **1** |
+| citation rate | 0.7209 | **1.0000** |
+| fabricated citations | 3 | **0** |
+| faithfulness | 0.8681 | 0.8581 |
+| answer_relevancy | 0.7530 | 0.7999 |
+
+**The bottom two rows cannot be used.** They come from the judge that failed calibration.
+
+What *can* be said, from numbers that do not depend on a judge:
+
+1. It costs **4× the API calls and latency**. Measured, certain.
+2. Its `CitationAgent` is now **redundant** — code-based citing beats it on both citation metrics, and those are counted, not judged.
+3. Its quality benefit rests entirely on withdrawn metrics.
+
+So the argument is "the cost is measured and the benefit is not", which is weaker than the reranking case (where the cost *and* the loss were both measured). Recommendation: **default `USE_MULTI_AGENT=false`, keep the flag**, and say plainly in the README that the four-stage path was not shown to be worth 4× the cost. Re-open it if the judge is ever calibrated well enough to detect a difference.
+
+Knowing when *not* to use the complexity you built is a stronger signal than the complexity.
 
 ### 2.1 — Get labelled data without labelling it yourself
 
@@ -322,9 +365,65 @@ Add `make eval` so the numbers are reproducible, and wire a small subset into CI
 
 ---
 
-# Milestone 3 — Make it real software (~1.5 weeks)
+# Milestone 3 — Make it real software (~1.5 weeks) ← NEXT
 
-### 3.1 — Tests (the 0-byte files are the loudest red flag in the repo)
+**Start here.** M1 and M2 are done and pushed. The project now measures itself honestly; what it does not yet do is run like software anyone else could deploy.
+
+Order matters. 3.1 first — the test suite already exists in outline (36 tests) but covers the newest code best and the oldest code not at all, which is backwards. Then 3.2 and 3.3, which are what turn "a Streamlit script" into "a service".
+
+### 3.1 — Tests ✅ DONE
+
+**254 tests, 47% line coverage**, all offline: no test calls a real API, and the
+retry policy's sleeps are patched rather than waited out. `make test` runs the
+suite in about 40 seconds; `make check` runs lint, types and tests together.
+
+Coverage on the modules this milestone targeted:
+
+| Module | Coverage |
+|---|---|
+| `query_router.py` | 99% |
+| `eval/metrics.py` | 97% |
+| `chunker.py` | 92% |
+| `hybrid_search.py` | 74% |
+| `citation_manager.py` | 66% |
+| `keyword_search.py` | 65% |
+| `pdf_parser.py` | 64% |
+
+The rest is I/O glue — ChromaDB, sentence-transformers, provider SDKs — where a
+mock would assert that the mock behaves like the mock.
+
+**Writing the tests found four bugs**, which is the argument for having written
+them:
+
+1. **`EXTRACTION` routing was dead code.** Each family's per-pattern weight sat
+   *below* its own threshold (0.5 against 0.7), so a single clear phrase never
+   fired. "Extract the evaluation metrics" and "List all the datasets" both fell
+   through to plain Q&A, and no extraction query could ever route. Since the
+   patterns within a family are alternative phrasings of one intent, they almost
+   never co-occur. Fixed by setting each weight equal to its threshold.
+2. **`"Tell me about BERT"` parsed as a two-item comparison.** Item extraction
+   keys off capitalisation, so the sentence-initial verb looked like a named
+   entity. The stopword list now covers imperatives.
+3. **`"Summarize the main findings"` routed to literature review.** The review
+   pattern matched `summarize the`, and review is evaluated before summary.
+   Narrowed to `summarize all`, which is what actually signals multi-document.
+4. **Section titles fragmented on punctuation.** `_match_heading` stripped a
+   trailing colon when *matching* but kept it in the returned title, so
+   `Introduction` and `Introduction:` became two different sections.
+
+Regression tests are pinned for the earlier bugs too — the `top_k` slider that
+was never passed through, `adaptive_search` mutating shared weights, the BM25
+index built once at startup, prose refusals going unrecorded, and citations
+being attached to refusals.
+
+Two tests exist purely as tripwires for problems that cost days:
+`test_every_corpus_pdf_yields_a_title` would have caught the missing-`/Title`
+bug on day one, and `test_kappa_punishes_the_always_yes_rater` encodes why raw
+agreement is never quoted alone.
+
+#### Original notes
+
+
 
 Target ~70% coverage on `src/`, prioritizing:
 
@@ -337,7 +436,48 @@ Target ~70% coverage on `src/`, prioritizing:
 
 Use `pytest` + `pytest-cov`. **Never call a real LLM API in a test.** Delete the two 0-byte files and build properly under `tests/`.
 
-### 3.2 — FastAPI layer
+**Status after M2:** 36 tests exist, and the coverage is lopsided in the wrong direction. The newest code is well tested (title recovery, paragraph citations, refusal detection — all written with tests alongside), while `chunker.py`, `query_router.py` and `llm_client.py` have none. The oldest code is the least verified, which is exactly backwards. `hybrid_search.py` is covered indirectly by the BEIR harness — the weight sweep reproducing pure BM25 and pure dense at its endpoints is a real correctness check on the fusion math — but has no unit tests.
+
+Two more worth adding, both suggested by M2 findings:
+
+- **`pdf_parser.py` metadata path** — the missing-`/Title` bug (5 of 8 papers) went unnoticed for the whole project. A test asserting that every fixture PDF yields a non-empty title would have caught it on day one.
+- **`eval/` itself** — eight of nineteen findings were bugs in the evaluation code. `metrics.py` is pure maths against known values, and `cohens_kappa` / `spearman` in `calibrate.py` can be checked against hand-computed cases. Evaluation code that is trusted but untested is how a failure gets scored as a success.
+
+### 3.2 — FastAPI layer ✅ DONE
+
+Live at `make api`, documented in [`docs/API.md`](docs/API.md), 26 tests in
+`test/test_api.py` — all offline, with every singleton replaced and `warm_up`
+patched out.
+
+Verified end to end against the real corpus: `/health` reports 441 chunks from 8
+papers, `/query` answered a question in 21s (retrieval 0.36s, the rest Groq
+queueing against its daily cap), and an off-topic question returned **HTTP 200
+with `refused: true`**.
+
+Four decisions worth defending in an interview:
+
+- **A refusal is a 200, not a 4xx.** Refusal is correct behaviour, measured at
+  23/23 on unanswerable questions. Returning 4xx would make it indistinguishable
+  from a malformed request in any error-rate dashboard.
+- **Upload returns 202 with a job id.** A 92-page paper takes ~9s to ingest.
+  Job state is in-process and not durable — a deliberate trade for a
+  single-instance deployment, documented rather than hidden.
+- **Streaming streams stages, not tokens.** `LLMClient` does not expose the
+  providers' streaming APIs, so `/query/stream` emits `retrieving` →
+  `generating` heartbeats → `answer`. Naming it a streaming endpoint while
+  silently buffering would be a lie the client discovers at runtime.
+- **Two generators are cached, one per pipeline mode.** `answer_question` takes
+  no per-call mode, so switching would mean mutating a shared object — exactly
+  the bug `adaptive_search` already shipped once.
+
+Also fixed: `fastapi` and `uvicorn` were arriving transitively through chromadb
+and were never declared. They are direct dependencies now, along with
+`python-multipart`, whose absence makes uploads fail at request time rather than
+at import.
+
+#### Original notes
+
+
 
 Streamlit-only says "toy." Add `api/main.py`:
 
@@ -356,19 +496,113 @@ Make ingestion async with a background worker so upload doesn't block. Then refa
 
 ### 3.3 — Docker + CI
 
-- `Dockerfile` — multi-stage, non-root user, pinned base image. Pre-download the embedding and reranker models into the image so cold start isn't 90 seconds.
-- `docker-compose.yml` — API + Streamlit + Chroma.
+- `Dockerfile` — multi-stage, non-root user, pinned base image. Pre-download the embedding model into the image so cold start isn't 90 seconds. **Runs ingestion at build time** so the corpus ships inside the image (see 3.5).
+- **No `docker-compose.yml`.** A Hugging Face Space is one container, so a compose file describing API + Streamlit + Chroma would describe a deployment that never happens. Streamlit is being removed and Chroma is embedded, not a service.
 - `.github/workflows/ci.yml` — lint (`ruff`), format check (`ruff format`), type check (`mypy`), `pytest` with coverage, Docker build. On every PR.
 - Pin `requirements.txt` exactly (currently all `>=`, which means your build is not reproducible) or move to `pyproject.toml` with `uv`.
 
-### 3.4 — Deploy it live
+### 3.4 — Replace Streamlit with a real frontend ← NEXT
 
-**A resume project that isn't clickable barely counts.** Get a public URL:
-- Streamlit Community Cloud (free, easiest, you're already on Streamlit)
-- Hugging Face Spaces (free, Docker-native, good fit for ML)
-- Fly.io / Render (more "real," costs a little)
+**Decided:** React + Vite, built to static files, served by FastAPI itself.
 
-Pre-load the corpus so a visitor can ask a question in under 10 seconds without uploading anything. Put the URL at the top of the README and on the resume line itself.
+Not Next.js. It needs a Node process, and a Hugging Face Space gives you one
+container — so it would mean running Node beside Python, or a second
+deployment. Next.js buys SSR and SEO; a research tool needs neither.
+
+Serving the built bundle from FastAPI gives one container, one deployment, no
+CORS, and SSE that works.
+
+#### The two features that matter
+
+**1. Click a citation, highlight its source.** This is the differentiator. Most
+RAG demos cannot do it, because they never knew which chunk a claim came from.
+This one does — that is what the deterministic citer bought.
+
+It needs a backend change. `add_paragraph_citations` currently returns a
+**string**:
+
+```
+...replaces recurrence. [Attention is All you Need, 2017]
+```
+
+so the frontend would have to parse text and guess which chunk is meant. The
+structure already exists inside the function — it scores every paragraph
+against every chunk and picks winners — and is then thrown away. Keep it:
+
+```
+paragraphs: [{ text: "...", sources: [{ chunk_id, score }] }]
+chunks:     [{ chunk_id, text, paper_id, section }]
+```
+
+Clicking then needs no parsing, because the link is already in the data.
+
+**Chunk-level, not sentence-level.** A single sentence carries too little
+vocabulary to match a chunk confidently — measured while building the citer.
+Sentence-level highlighting would look more precise and be less correct.
+
+**No page numbers.** The parser has them and ingestion drops them. Adding them
+means re-indexing the corpus for a small gain. Skipped deliberately.
+
+**2. Upload with live progress.** `POST /papers` already returns 202 with a job
+id and `GET /jobs/{id}` reports state.
+
+**No per-stage progress.** Ingestion would have to thread a callback through
+`IngestionPipeline`, which is currently stable and well tested. `queued →
+running → succeeded` with the filename and a spinner is enough; the frontend
+shows chunk and section counts when it lands.
+
+#### What the UI must get right
+
+- A refusal renders as a calm, normal answer — never as an error. It is correct
+  behaviour, measured at 23/23.
+- Retrieved papers and their scores are visible, not hidden behind a chat box.
+- Uploads are labelled as session-only (see 3.5).
+
+### 3.5 — Deploy to Hugging Face Spaces
+
+**Decided:** Docker Space, one container, **corpus baked into the image**.
+
+The constraint that drives everything: **HF Spaces have an ephemeral
+filesystem.** Anything written to disk is lost on restart, rebuild, or wake from
+sleep. A ChromaDB on disk would lose all 441 chunks every time.
+
+The fix is to delete the problem rather than solve it: run ingestion during
+`docker build` and ship the vector store inside the image. Nothing is written at
+runtime, so nothing can be lost. No database, no persistent-storage add-on, no
+cost.
+
+```
+stage 1: node   -> build the React bundle
+stage 2: python -> FastAPI serving /api/* and the bundle, port 7860
+                   embedding model + corpus baked in
+```
+
+Three things to plan for:
+
+| Issue | Decision |
+|---|---|
+| Cold start ~40s (model + BM25 index) | Bake the model into the image; show an honest loading screen. Free Spaces sleep after ~48h idle, so the first visitor waits. A paid CPU upgrade (~$9/mo) removes this; not worth it yet. |
+| Uploads vanish on restart | Say so in the UI. Letting someone upload a thesis and silently lose it is worse than admitting the limit. |
+| Groq's 100k tokens/day | Already blocked three evaluation runs. A public demo would exhaust it in an afternoon. Default the deployment to Gemini or OpenAI. |
+
+Secrets go in HF Space settings, never the repo.
+
+#### Deferred: pgvector
+
+Replacing ChromaDB with Postgres/pgvector would give real persistence, and
+"I migrated the vector store and re-measured to prove the numbers held" is a
+stronger story than most candidates have.
+
+It is **deferred, not cancelled**, because it is not on the critical path to
+being live, and because it carries a real cost: **every number in
+`docs/EVALUATION.md` was measured on Chroma's HNSW index.** pgvector's index
+behaves differently. Swapping stores and keeping the old numbers would quietly
+make the document false — which would undo the best part of this project.
+
+If it happens, the retrieval evaluation gets re-run and both sets of numbers are
+published side by side.
+
+Put the public URL at the top of the README and on the resume line itself.
 
 ### 3.5 — Observability and cost tracking
 

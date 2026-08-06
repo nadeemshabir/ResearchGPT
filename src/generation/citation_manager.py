@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass
 from typing import Any
 
 from src.config import CitationStyle, get_settings
@@ -73,15 +74,50 @@ def _content_words(text: str) -> set[str]:
 
 
 def _source_of(chunk: dict[str, Any]) -> dict[str, Any]:
-    """Citation fields for a retrieved chunk, taken from its stored metadata."""
+    """Citation fields for a retrieved chunk, taken from its stored metadata.
+
+    ``chunk_id`` comes from the chunk's own ``id``, not from metadata: it is
+    what a client uses to look the passage back up, so it has to survive even
+    when metadata is sparse.
+    """
     metadata = chunk.get("metadata", {}) or {}
     paper_id = str(metadata.get("paper_id", ""))
     return {
+        "chunk_id": str(chunk.get("id") or metadata.get("chunk_id") or ""),
         "paper_id": paper_id,
         "title": metadata.get("title") or paper_id or "Unknown",
         "author": metadata.get("author") or "Unknown",
         "year": metadata.get("year") or _year_from_paper_id(paper_id) or "n.d.",
+        "section": metadata.get("section_title") or "Unknown",
     }
+
+
+@dataclass(frozen=True)
+class CitedSource:
+    """One chunk credited for a paragraph."""
+
+    chunk_id: str
+    paper_id: str
+    title: str
+    year: str
+    section: str
+    #: Content-word overlap with the paragraph, 0-1. Exposed so a client can
+    #: show how strong an attribution is rather than treating all as equal.
+    score: float
+
+
+@dataclass(frozen=True)
+class ParagraphAttribution:
+    """One paragraph of an answer and the chunks it draws on.
+
+    ``sources`` is empty for a paragraph that matched nothing above the
+    threshold, and for headings and lists (``structural``). Both are kept in
+    the list so the answer can be rebuilt in order from the attributions alone.
+    """
+
+    text: str
+    sources: list[CitedSource]
+    structural: bool = False
 
 
 def _year_from_paper_id(paper_id: str) -> str:
@@ -93,6 +129,11 @@ def _year_from_paper_id(paper_id: str) -> str:
     """
     match = re.search(r"(?:^|[_\-])((?:19|20)\d{2})(?:$|[_\-])", paper_id)
     return match.group(1) if match else ""
+
+
+#: A single token of word characters -- no spaces. "attention_2017_chunk_5",
+#: "vaswani2017", "12". Distinguishes a citation key from bracketed prose.
+_IDENTIFIER_BRACKET = re.compile(r"[\w][\w\-.]*")
 
 
 def _strip_citations(text: str, titles: set[str]) -> str:
@@ -120,6 +161,16 @@ def _strip_citations(text: str, titles: set[str]) -> str:
             # Either direction: the model may quote the full title or shorten it.
             if title in inner or (len(inner) >= 10 and inner in title):
                 return ""
+        # A bracket holding a single identifier-like token is a citation key,
+        # not prose. Observed: a model asked *not* to cite still emitted
+        # "[attention_2017_chunk_5]" -- an id it had never been shown, matching
+        # this project's internal format by coincidence. Left in, it reads to a
+        # user as a real reference.
+        #
+        # Prose in brackets is untouched: "[see the appendix]" has spaces, so it
+        # fails this test and survives.
+        if _IDENTIFIER_BRACKET.fullmatch(inner):
+            return ""
         return match.group(0)
 
     cleaned = _SOURCE_TAG_PATTERN.sub("", text)
@@ -238,41 +289,44 @@ class CitationManager:
                 cited.append(sentence)
         return " ".join(cited)
 
-    def add_paragraph_citations(
+    def attribute_paragraphs(
         self,
         text: str,
         chunks: list[dict[str, Any]],
         min_similarity: float | None = None,
         max_per_paragraph: int | None = None,
-    ) -> str:
-        """Cite each paragraph with the retrieved chunks it actually draws on.
+    ) -> list[ParagraphAttribution]:
+        """Map each paragraph of ``text`` to the chunks it draws on.
 
-        Citations are placed **at the end of each paragraph**, never after
-        individual sentences. When a paragraph draws on several papers, all of
-        them appear together in one group: ``[A, 2017; B, 2019]``.
+        This is where the work happens; :meth:`add_paragraph_citations` renders
+        the result as text. Callers that need to *link* a claim to its source --
+        a UI highlighting the passage behind a sentence, for instance -- want
+        this structure, not a string they would have to parse back.
 
-        Per-sentence citation is the obvious first instinct and it is worse on
-        both counts -- it makes answers unreadable, and a lone sentence carries
-        too little vocabulary to match a chunk confidently.
+        Attribution is by content-word overlap between the paragraph and each
+        chunk, so a source can never be invented: every attribution names a
+        chunk that was actually retrieved. A paragraph matching nothing above
+        ``min_similarity`` is left unattributed rather than given a guess.
 
-        Matching is by content-word overlap between the paragraph and each
-        chunk, so a source can never be invented: every citation names a chunk
-        that was actually retrieved. A paragraph matching nothing above
-        ``min_similarity`` is left uncited rather than given a guess.
+        Matching is **chunk-level, not sentence-level**. A lone sentence carries
+        too little vocabulary to match confidently; sentence-level attribution
+        would look more precise and be less correct.
 
         Args:
             text: The generated answer.
-            chunks: Retrieved chunks, each with ``text`` and ``metadata``.
+            chunks: Retrieved chunks, each with ``id``, ``text`` and ``metadata``.
             min_similarity: Overlap floor. Defaults to
                 ``Settings.citation_min_similarity``.
             max_per_paragraph: Cap on sources per paragraph. Defaults to
                 ``Settings.citation_max_per_paragraph``.
 
         Returns:
-            The answer with citation groups appended to matching paragraphs.
+            One :class:`ParagraphAttribution` per paragraph, in order, including
+            structural and unattributed ones so the answer can be rebuilt from
+            the list without consulting the original text.
         """
-        if not text.strip() or not chunks:
-            return text
+        if not text.strip():
+            return []
 
         settings = get_settings()
         floor = (
@@ -291,16 +345,21 @@ class CitationManager:
             str(source["title"]).lower() for _, source in scored_chunks if source.get("title")
         }
 
-        cited_paragraphs: list[str] = []
+        attributions: list[ParagraphAttribution] = []
         for raw_paragraph in re.split(r"\n\s*\n", _strip_citations(text, known_titles)):
             body = raw_paragraph.rstrip()
-            if not body.strip() or _is_structural(body):
-                cited_paragraphs.append(raw_paragraph)
+
+            if not body.strip():
+                continue
+            if _is_structural(body):
+                attributions.append(
+                    ParagraphAttribution(text=body, sources=[], structural=True)
+                )
                 continue
 
             words = _content_words(body)
-            if not words:
-                cited_paragraphs.append(raw_paragraph)
+            if not words or not scored_chunks:
+                attributions.append(ParagraphAttribution(text=body, sources=[]))
                 continue
 
             # Score every chunk, keep the best per paper: two chunks from one
@@ -316,15 +375,65 @@ class CitationManager:
                 if key not in best_by_paper or overlap > best_by_paper[key][0]:
                     best_by_paper[key] = (overlap, source)
 
-            if not best_by_paper:
-                cited_paragraphs.append(raw_paragraph)
-                continue
-
             ranked = sorted(best_by_paper.values(), key=lambda pair: -pair[0])[:cap]
-            group = " ".join(self.format_citation(source) for _, source in ranked)
-            cited_paragraphs.append(f"{body} {self.merge_duplicate_citations(group)}")
+            attributions.append(
+                ParagraphAttribution(
+                    text=body,
+                    sources=[
+                        CitedSource(
+                            chunk_id=str(source.get("chunk_id", "")),
+                            paper_id=str(source.get("paper_id", "")),
+                            title=str(source.get("title", "Unknown")),
+                            year=str(source.get("year", "n.d.")),
+                            section=str(source.get("section", "Unknown")),
+                            score=round(score, 4),
+                        )
+                        for score, source in ranked
+                    ],
+                )
+            )
 
-        return "\n\n".join(cited_paragraphs)
+        return attributions
+
+    def add_paragraph_citations(
+        self,
+        text: str,
+        chunks: list[dict[str, Any]],
+        min_similarity: float | None = None,
+        max_per_paragraph: int | None = None,
+    ) -> str:
+        """Render :meth:`attribute_paragraphs` as text with inline citations.
+
+        Citations are placed **at the end of each paragraph**, never after
+        individual sentences. When a paragraph draws on several papers, all of
+        them appear together in one group: ``[A, 2017; B, 2019]``.
+
+        Per-sentence citation is the obvious first instinct and it is worse on
+        both counts -- it makes answers unreadable, and a lone sentence carries
+        too little vocabulary to match a chunk confidently.
+
+        Returns:
+            The answer with citation groups appended to matching paragraphs.
+        """
+        if not text.strip() or not chunks:
+            return text
+
+        rendered: list[str] = []
+        for paragraph in self.attribute_paragraphs(
+            text, chunks, min_similarity, max_per_paragraph
+        ):
+            if not paragraph.sources:
+                rendered.append(paragraph.text)
+                continue
+            group = " ".join(
+                self.format_citation(
+                    {"title": source.title, "year": source.year, "author": "Unknown"}
+                )
+                for source in paragraph.sources
+            )
+            rendered.append(f"{paragraph.text} {self.merge_duplicate_citations(group)}")
+
+        return "\n\n".join(rendered)
 
     def generate_bibliography(self, sources: list[dict[str, Any]]) -> str:
         """Render a deduplicated reference list in Markdown."""

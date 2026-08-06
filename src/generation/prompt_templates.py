@@ -20,6 +20,34 @@ _GROUNDING_RULE = (
     "knowledge."
 )
 
+#: PDF extraction flattens mathematics: the Transformer paper's attention
+#: equation reaches the model as "softmax(QKT √dk )V" -- superscript, fraction
+#: bar and subscript all lost. Asking for LaTeX lets the frontend render what
+#: the excerpt *says* in readable form.
+#:
+#: The line about not inventing terms matters. Restoring a superscript that
+#: extraction dropped is formatting; adding a term that was never in the
+#: excerpt is a hallucination, and one that faithfulness scoring would likely
+#: miss because the surrounding prose is faithful.
+_MATH_RULE = (
+    "6. MATHS: write every equation, variable, and symbol in LaTeX, never in "
+    "backticks. Use $...$ inline and $$...$$ for a standalone equation.\n"
+    "   - `d_k` is wrong, $d_k$ is right.\n"
+    "   - `1/sqrt(dk)` is wrong, $\\frac{1}{\\sqrt{d_k}}$ is right.\n"
+    "   - Extraction flattens the source, so `softmax(QKT vdk )V` should be "
+    "written $\\mathrm{softmax}\\!\\left(\\frac{QK^T}{\\sqrt{d_k}}\\right)V$.\n"
+    "   Restore only the formatting the notation implies. Never add a term, "
+    "symbol, or operation that is not in the excerpt.\n"
+)
+
+#: Repeated in the system prompt because a rule at position six in a numbered
+#: list is routinely ignored -- the model reached for backticks instead of
+#: LaTeX until this was stated twice.
+_MATH_SYSTEM_RULE = (
+    "Write all mathematics in LaTeX ($...$ inline, $$...$$ for display "
+    "equations), never in backticks or plain text."
+)
+
 
 class PromptTemplates:
     """Prompt builders, grouped as static methods."""
@@ -27,7 +55,7 @@ class PromptTemplates:
     SYSTEM_PROMPTS: dict[str, str] = {
         "qa": (
             "You are a research assistant answering questions about academic "
-            "papers.\n\n" + _GROUNDING_RULE
+            "papers.\n\n" + _GROUNDING_RULE + "\n\n" + _MATH_SYSTEM_RULE
         ),
         "analyzer": (
             "You are a research paper analyzer. Extract key information from "
@@ -103,7 +131,7 @@ INSTRUCTIONS:
 3. Include specific findings, numbers, and metrics where present.
 {citation_rule}
 5. If the excerpts do not answer the question, say so plainly and stop.
-
+{_MATH_RULE}
 ANSWER:"""
 
     @staticmethod
