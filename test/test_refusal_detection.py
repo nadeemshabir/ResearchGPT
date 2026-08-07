@@ -87,6 +87,23 @@ def test_a_scientific_negative_finding_is_not_a_refusal() -> None:
     )
 
 
+def test_a_refusal_that_explains_what_the_corpus_covers_is_still_a_refusal() -> None:
+    """Real output from the deployed service, and a miss for the length rule.
+
+    The model declines, then explains what the sources are about instead. That
+    pushed it past the length cut-off and it was scored as an answer. Position
+    separates the two cases: a refusal *leads* with the disclaimer.
+    """
+    assert looks_like_refusal(
+        "The provided sources do not contain any information about the best recipe "
+        "for chocolate cake. Source 1 explicitly states that it discusses attention "
+        "mechanisms in the Transformer architecture, Source 2 covers convolutional "
+        "networks for image classification, and Source 3 concerns reinforcement "
+        "learning from human feedback. None of them relate to cooking or recipes "
+        "of any kind, so no answer can be given from this corpus."
+    )
+
+
 def test_a_partial_answer_is_not_a_refusal() -> None:
     """A disclaimer followed by a real answer is an answer.
 

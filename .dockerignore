@@ -37,6 +37,13 @@ venv/
 .coverage
 htmlcov/
 
+# The HuggingFace model cache. ~4GB of downloaded weights, and the single
+# largest thing in the tree by two orders of magnitude. The image downloads its
+# own copy of the embedding model, so shipping this one to the daemon achieved
+# nothing except making every build slow.
+.cache/
+models/
+
 # Not needed at runtime. Tests and evaluation are CI's job, not the image's.
 test/
 eval/

@@ -99,6 +99,24 @@ def looks_like_refusal(text: str) -> bool:
     if not matched:
         return False
 
+    # Position discriminates better than length. A refusal *leads* with the
+    # disclaimer and then explains what the sources cover instead:
+    #
+    #     "The provided sources do not contain any information about chocolate
+    #      cake. Source 1 discusses attention mechanisms..."
+    #
+    # A partial answer gives information first and hedges afterwards:
+    #
+    #     "The excerpts confirm BERT was evaluated on SuperGLUE. However, they
+    #      do not state the score. A score of 80.5 is mentioned for GLUE..."
+    #
+    # The length rule below could not tell those apart -- the first is a refusal
+    # at any length, and it was being scored as an answer whenever the model
+    # was talkative about what the corpus *does* cover.
+    first_sentence = re.split(r"(?<=[.!?])\s", stripped, maxsplit=1)[0]
+    if any(pattern.search(first_sentence) for pattern in _REFUSAL_PATTERNS):
+        return True
+
     # Strip citation groups before measuring length: a one-line refusal
     # carrying three long paper titles is still a one-line refusal.
     without_citations = re.sub(r"\[[^\]]*\]", "", stripped).strip()

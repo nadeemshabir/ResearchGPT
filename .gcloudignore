@@ -41,6 +41,12 @@ venv/
 .coverage
 htmlcov/
 
+# The HuggingFace model cache: ~4GB of downloaded weights. Uploading it to
+# Cloud Build timed out the CLI before a build could even start, and the image
+# downloads its own copy of the model anyway.
+.cache/
+models/
+
 # Not needed at runtime
 test/
 eval/

@@ -73,9 +73,17 @@ gcloud secrets add-iam-policy-binding researchgpt-gemini-key \
 ./deploy/cloudrun.sh YOUR_PROJECT us-central1
 ```
 
-First run takes about 15 minutes: torch, the embedding model, eight PDFs, and
-an embedding pass over ~600 chunks all happen inside the build. Subsequent
+First run takes roughly 25-35 minutes: torch, the embedding model, eight PDFs,
+and an embedding pass over ~600 chunks all happen inside the build. Subsequent
 deploys reuse cached layers.
+
+It runs on Cloud Build's **default machine**, which is what the free allowance
+covers. A bigger machine roughly halves the time and is billed from the first
+minute:
+
+```bash
+BUILD_MACHINE=e2-highcpu-8 ./deploy/cloudrun.sh YOUR_PROJECT
+```
 
 **Do not point the demo at Groq.** Its free tier caps at 100,000 tokens per
 day, which has already blocked three evaluation runs on this project. When it

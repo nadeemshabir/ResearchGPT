@@ -40,16 +40,27 @@ gcloud artifacts repositories describe "${REPO}" --location "${REGION}" --quiet 
         --description="ResearchGPT container images" \
         --quiet
 
-echo "==> Building (this takes ~15 minutes: torch, the embedding model, and"
-echo "    indexing eight papers all happen inside the build)"
-# The default Cloud Build machine times out on this. The corpus is fetched and
-# embedded during the build, which is the point -- the vector store ships in
-# the image because Cloud Run's filesystem is ephemeral.
-gcloud builds submit \
-    --tag "${IMAGE}" \
-    --timeout=45m \
-    --machine-type=e2-highcpu-8 \
-    .
+echo "==> Building. The corpus is fetched and embedded inside the build, which"
+echo "    is the point: Cloud Run's filesystem is ephemeral, so the vector"
+echo "    store has to ship in the image."
+#
+# Machine type matters to the bill, not just the clock. Cloud Build's free
+# allowance covers the *default* machine only; asking for e2-highcpu-8 is
+# billed from the first minute. The default is slower (roughly 25-35 minutes
+# against 15) and free, so it is what runs unless BUILD_MACHINE says otherwise:
+#
+#   BUILD_MACHINE=e2-highcpu-8 ./deploy/cloudrun.sh PROJECT
+#
+BUILD_MACHINE="${BUILD_MACHINE:-}"
+BUILD_ARGS=(--tag "${IMAGE}" --timeout=45m)
+if [[ -n "${BUILD_MACHINE}" ]]; then
+    echo "    Using ${BUILD_MACHINE} -- faster, and billed."
+    BUILD_ARGS+=(--machine-type="${BUILD_MACHINE}")
+else
+    echo "    Using the default machine (slower, covered by the free tier)."
+fi
+
+gcloud builds submit "${BUILD_ARGS[@]}" .
 
 echo "==> Deploying"
 gcloud run deploy "${SERVICE}" \
