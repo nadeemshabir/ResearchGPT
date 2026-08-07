@@ -11,9 +11,12 @@ export default defineConfig({
   build: {
     outDir: "../static",
     emptyOutDir: true,
-    // A demo that a recruiter opens cold is already waiting on a 40s backend
-    // wake-up; the bundle should not add to it.
-    chunkSizeWarningLimit: 300,
+    // The entry chunk is what matters for first paint and sits around 158KB.
+    // The Markdown/KaTeX renderer is deliberately larger and deliberately
+    // lazy -- it is fetched when a question is sent, so it arrives while the
+    // model is still generating. Warning at 300 flagged that split as a
+    // problem on every build, which trains you to ignore the warning.
+    chunkSizeWarningLimit: 500,
   },
   server: {
     port: 5173,

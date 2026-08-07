@@ -60,15 +60,35 @@ _STOPWORDS = frozenset(
 )
 
 
+#: LaTeX control sequences, and the delimiters that wrap them.
+_LATEX_COMMAND = re.compile(r"\\[a-zA-Z]+\s*|\\[\\(){}\[\]!,;:]|[${}^_]")
+
+
+def _strip_latex(text: str) -> str:
+    """Remove LaTeX markup so notation does not act as topical vocabulary.
+
+    Only the commands are removed; identifiers a human would read aloud, like
+    ``d_k`` or ``ImageNet``, survive as ordinary words.
+    """
+    return _LATEX_COMMAND.sub(" ", text)
+
+
 def _content_words(text: str) -> set[str]:
     """Topical vocabulary of ``text``, lowercased.
 
     Tokens shorter than three characters are dropped along with stopwords; they
     are almost always articles, symbols, or fragments of split words.
+
+    LaTeX markup is stripped first. Without that, a paragraph that is mostly an
+    equation reduces to ``{frac, alpha, sum, max, min, left, right, beta}`` --
+    vocabulary shared by every maths-heavy paper in the corpus. Observed: the
+    AlexNet local-response-normalisation formula was attributed to both AlexNet
+    *and* DeepSeek-R1, because the notation matched and the actual subject
+    matter never entered the comparison.
     """
     return {
         token
-        for token in re.findall(r"[a-z0-9][a-z0-9\-]*", text.lower())
+        for token in re.findall(r"[a-z0-9][a-z0-9\-]*", _strip_latex(text).lower())
         if len(token) > 2 and token not in _STOPWORDS
     }
 

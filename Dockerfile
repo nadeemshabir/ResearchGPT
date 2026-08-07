@@ -36,6 +36,12 @@ RUN apt-get update \
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PIP_NO_CACHE_DIR=1 \
+    # The torch CPU wheel is ~200MB. On a flaky connection the default 15s
+    # timeout and 5 retries produce a truncated download, which then fails
+    # pip's hash check with a message about tampering -- alarming, and
+    # nothing to do with the actual cause.
+    PIP_DEFAULT_TIMEOUT=120 \
+    PIP_RETRIES=10 \
     # Hugging Face Spaces serve on 7860.
     PORT=7860 \
     # Model cache inside the image, not $HOME, so it survives the USER switch.
@@ -47,8 +53,13 @@ WORKDIR /app
 
 # CPU-only torch, installed before anything that would pull the default build.
 # The CUDA wheels are ~2.5GB and every byte of it is dead weight on a CPU Space.
+#
+# Pinned to 2.9.1 to match the development environment. 2.4.1 failed the build:
+# `transformers` 4.57 imports `torch.distributed.tensor.DTensor`, which did not
+# exist until torch 2.5, so the model download step died with an ImportError.
+# Pinning torch without pinning what depends on it is how that happens.
 RUN pip install --no-cache-dir \
-    torch==2.4.1 --index-url https://download.pytorch.org/whl/cpu
+    torch==2.9.1 --index-url https://download.pytorch.org/whl/cpu
 
 COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
