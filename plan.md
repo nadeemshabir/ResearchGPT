@@ -599,9 +599,35 @@ shows chunk and section counts when it lands.
 - Retrieved papers and their scores are visible, not hidden behind a chat box.
 - Uploads are labelled as session-only (see 3.5).
 
-### 3.5 — Deploy to Hugging Face Spaces
+### 3.5 — Deploy
 
-**Decided:** Docker Space, one container, **corpus baked into the image**.
+**Decided:** Google Cloud Run, one container, **corpus baked into the image**.
+
+**Hugging Face Spaces was the original target and is no longer viable.** Gradio
+and Docker Spaces now require a paid PRO plan; only Static Spaces are free, and
+a static host cannot run a Python backend with an embedding model. That also
+rules out the Gradio fallback, since Gradio is paid too.
+
+Cloud Run takes the Dockerfile unchanged — the image already reads `$PORT`,
+which is what Cloud Run injects — so nothing in the codebase changed. Setup and
+the reasoning behind each flag are in [`docs/DEPLOY.md`](docs/DEPLOY.md), with
+`deploy/cloudrun.sh` doing the work.
+
+What was rejected, and why:
+
+| Option | Verdict |
+|---|---|
+| HF PRO (~$9/mo) | Works unchanged. Rejected only because a free path exists. |
+| Render / Koyeb free | **512 MB RAM.** torch alone needs more. |
+| Slim the image with ONNX instead of torch | Genuinely free at ~600 MB, but ONNX embeddings are *near*-identical to torch, not identical. Would require re-running the BEIR evaluation before any retrieval number could still be quoted. Deferred on the same principle as pgvector. |
+| Oracle Cloud Always Free | 24 GB free forever, but you own a VM, a reverse proxy and TLS. |
+
+The honest cost of Cloud Run: **60-90 second cold starts.** A 2.95 GB image pull
+plus ~40 s of model loading and BM25 indexing. `--min-instances 1` removes it and
+leaves the free tier at roughly $10-15/month.
+
+The original Spaces reasoning is kept below, because the constraint that drove
+the design — an ephemeral filesystem — is identical on Cloud Run.
 
 The constraint that drives everything: **HF Spaces have an ephemeral
 filesystem.** Anything written to disk is lost on restart, rebuild, or wake from

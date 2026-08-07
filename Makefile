@@ -1,5 +1,5 @@
 ﻿.PHONY: help install install-dev api api-dev serve frontend frontend-dev frontend-install \
-        docker docker-run \
+        docker docker-run deploy \
         lint format typecheck check corpus clean reset-db \
         eval eval-quick eval-sweep-weights eval-sweep-rrfk index \
         eval-testset eval-generation eval-generation-quick eval-generation-agents \
@@ -17,6 +17,7 @@ help:
 	@echo "corpus       Download the 8-paper demo corpus into data/raw/"
 	@echo "docker       Build the image (fetches + indexes the corpus)"
 	@echo "docker-run   Run the image on :7860"
+	@echo "deploy       Deploy to Cloud Run:  make deploy PROJECT=my-project"
 	@echo "test         Run the test suite (offline, no API calls)"
 	@echo "test-cov     Run tests with a coverage report"
 	@echo "lint         Run ruff"
@@ -84,6 +85,11 @@ docker:
 
 docker-run:
 	docker run --rm -p 7860:7860 --env-file .env researchgpt
+
+# Build with Cloud Build and deploy a Cloud Run revision. See docs/DEPLOY.md
+# for the one-time Secret Manager setup.
+deploy:
+	./deploy/cloudrun.sh $(PROJECT) $(REGION)
 
 lint:
 	ruff check src scripts eval test api
