@@ -57,9 +57,7 @@ class VectorDatabase:
                 metadata={"description": "Research paper chunk embeddings"},
             )
         except Exception as exc:  # noqa: BLE001 - typed error for callers
-            raise VectorStoreError(
-                f"Could not open vector store at {self.db_path}: {exc}"
-            ) from exc
+            raise VectorStoreError(f"Could not open vector store at {self.db_path}: {exc}") from exc
 
         logger.info("Collection %r holds %d chunks", self.collection_name, self.count())
 
@@ -257,9 +255,7 @@ class VectorDatabase:
     def get_by_paper_id(self, paper_id: str) -> dict[str, Any]:
         """Return every stored chunk for one paper."""
         try:
-            return cast(
-                dict[str, Any], self.collection.get(where={"paper_id": paper_id})
-            )
+            return cast(dict[str, Any], self.collection.get(where={"paper_id": paper_id}))
         except Exception as exc:  # noqa: BLE001
             raise VectorStoreError(f"Lookup for paper {paper_id!r} failed: {exc}") from exc
 

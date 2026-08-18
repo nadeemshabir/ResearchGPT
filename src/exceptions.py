@@ -70,7 +70,9 @@ class EmbeddingDimensionMismatchError(VectorStoreError):
     model) is obvious.
     """
 
-    def __init__(self, expected: int, actual: int, collection_model: str, active_model: str) -> None:
+    def __init__(
+        self, expected: int, actual: int, collection_model: str, active_model: str
+    ) -> None:
         super().__init__(
             f"Collection was built with '{collection_model}' ({expected}-dim) but the "
             f"active embedding model is '{active_model}' ({actual}-dim). "
@@ -102,7 +104,9 @@ class NoRelevantContextError(RetrievalError):
     hallucination this system exists to avoid.
     """
 
-    def __init__(self, query: str, *, candidates_considered: int = 0, threshold: float | None = None) -> None:
+    def __init__(
+        self, query: str, *, candidates_considered: int = 0, threshold: float | None = None
+    ) -> None:
         detail = f" (considered {candidates_considered} candidates"
         if threshold is not None:
             detail += f", threshold {threshold}"
@@ -119,7 +123,9 @@ class NoRelevantContextError(RetrievalError):
 class LLMError(ResearchGPTError):
     """Base class for LLM provider failures."""
 
-    def __init__(self, message: str, *, provider: str | None = None, model: str | None = None) -> None:
+    def __init__(
+        self, message: str, *, provider: str | None = None, model: str | None = None
+    ) -> None:
         super().__init__(message)
         self.provider = provider
         self.model = model

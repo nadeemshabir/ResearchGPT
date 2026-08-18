@@ -84,6 +84,7 @@ so each request is handed to `asyncio.to_thread`.
 | `GET` | `/jobs/{id}` | Ingestion status |
 | `GET` | `/jobs` | Recent jobs |
 | `GET` | `/health` | Liveness and dependency checks |
+| `GET` | `/` | The built React bundle, or a pointer to `/docs` if it is absent |
 
 ### POST /query
 
@@ -104,18 +105,25 @@ takes no per-call mode. Mutating a shared generator would leak one request's
 configuration into the next — a bug this project already shipped once, in
 `adaptive_search`.
 
+**Every request takes the plain Q&A path.** Both cached generators are built
+with `use_smart_routing=False`, so comparison and literature-review queries are
+answered the same way as any other question. Routing was never covered by the
+evaluation and it over-triggers on the expensive review path, so the API serves
+the measured behaviour. There is no request field to switch it on.
+
 ### GET /health
 
 ```json
 {
   "status": "ok",
+  "version": "0.2.0",
   "dependencies": [
-    {"name": "vector_store", "ok": true, "detail": "441 chunks from 8 papers"},
-    {"name": "llm",          "ok": true, "detail": "groq/llama-3.3-70b-versatile"},
-    {"name": "api_key",      "ok": true, "detail": "provider=groq"}
+    {"name": "vector_store", "ok": true, "detail": "597 chunks from 8 papers"},
+    {"name": "llm",          "ok": true, "detail": "gemini/gemini-2.5-flash"},
+    {"name": "api_key",      "ok": true, "detail": "provider=gemini"}
   ],
   "total_papers": 8,
-  "total_chunks": 441
+  "total_chunks": 597
 }
 ```
 
@@ -160,6 +168,6 @@ enforced as they arrive, so an oversized file is rejected before it lands.
 
 ## Testing
 
-26 API tests in [`test/test_api.py`](../test/test_api.py), all offline: every
+29 API tests in [`test/test_api.py`](../test/test_api.py), all offline: every
 singleton is replaced and `warm_up` is patched out, so no model loads and no
 provider is called.

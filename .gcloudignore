@@ -1,0 +1,58 @@
+# What Cloud Build uploads. Kept in step with .dockerignore -- the build
+# context should be the same wherever it runs, or a Cloud Build failure will
+# not reproduce locally.
+#
+# Note: unlike .dockerignore, this file also controls what is *uploaded*, so
+# excluding large directories here saves upload time on every deploy.
+
+.git/
+.gitignore
+.github/
+
+# Build outputs, regenerated in-image
+static/
+frontend/node_modules/
+frontend/dist/
+*.tsbuildinfo
+
+# The vector store is built during the image build from the fetched corpus.
+# Uploading a local one would ship whatever happened to be on this machine.
+data/chroma_db/
+data/eval_chroma/
+data/raw/*.pdf
+data/processed/
+
+# Secrets. The key comes from Secret Manager at runtime, never from the image.
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+venv/
+.venv/
+*.egg-info/
+
+# Tooling caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# The HuggingFace model cache: ~4GB of downloaded weights. Uploading it to
+# Cloud Build timed out the CLI before a build could even start, and the image
+# downloads its own copy of the model anyway.
+.cache/
+models/
+
+# Not needed at runtime
+test/
+eval/
+docs/
+plan.md
+Makefile
+requirements-dev.txt
+.idea/
+.vscode/

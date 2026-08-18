@@ -108,9 +108,7 @@ def test_ndcg_rewards_ranking_the_answer_higher() -> None:
     last = ndcg_at_k(["x", "y", "hit"], {"hit"}, 3)
 
     assert first > last
-    assert recall_at_k(["hit", "x", "y"], {"hit"}, 3) == recall_at_k(
-        ["x", "y", "hit"], {"hit"}, 3
-    )
+    assert recall_at_k(["hit", "x", "y"], {"hit"}, 3) == recall_at_k(["x", "y", "hit"], {"hit"}, 3)
 
 
 def test_ndcg_ideal_is_capped_at_k() -> None:

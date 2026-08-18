@@ -105,8 +105,7 @@ def load_unanswerable() -> list[dict[str, str]]:
     """Read the hand-written unanswerable questions."""
     if not UNANSWERABLE_PATH.exists():
         raise FileNotFoundError(
-            f"{UNANSWERABLE_PATH} does not exist. "
-            f"Create it with: python -m eval.refusal --template"
+            f"{UNANSWERABLE_PATH} does not exist. Create it with: python -m eval.refusal --template"
         )
     payload = json.loads(UNANSWERABLE_PATH.read_text(encoding="utf-8"))
     return [
@@ -231,9 +230,7 @@ def evaluate(
     }
 
 
-def sweep(
-    unanswerable: list[dict[str, str]], answerable: list[str]
-) -> list[dict[str, Any]]:
+def sweep(unanswerable: list[dict[str, str]], answerable: list[str]) -> list[dict[str, Any]]:
     """Score every threshold in the grid against both question sets.
 
     Similarity scores do not depend on the threshold, so each question is
@@ -340,8 +337,10 @@ def print_sweep(rows: list[dict[str, Any]], current: float) -> None:
             f"   {row['balanced_accuracy']:>8.4f}{marker}{shipped}"
         )
 
-    print(f"\n  Best balanced accuracy at {best['threshold']:.2f}"
-          f" ({best['balanced_accuracy']:.4f}); shipped is {current:.2f}.")
+    print(
+        f"\n  Best balanced accuracy at {best['threshold']:.2f}"
+        f" ({best['balanced_accuracy']:.4f}); shipped is {current:.2f}."
+    )
     print("\n  Balanced accuracy weights both directions equally. If a wrong")
     print("  answer costs more than a missed one -- usually true for research")
     print("  tools -- pick a higher threshold than this row suggests.")

@@ -44,9 +44,7 @@ class KeywordSearcher:
                 ``Settings.min_bm25_score``.
         """
         self.database = database or VectorDatabase()
-        self.min_score = (
-            min_score if min_score is not None else get_settings().min_bm25_score
-        )
+        self.min_score = min_score if min_score is not None else get_settings().min_bm25_score
 
         self.corpus: list[str] = []
         self.corpus_metadata: list[dict[str, Any]] = []

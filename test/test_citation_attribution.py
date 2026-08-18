@@ -102,8 +102,7 @@ def test_structural_paragraphs_are_marked_and_kept() -> None:
     """Kept in the list so the answer can be rebuilt in order from it alone."""
     manager = CitationManager()
     answer = (
-        "## Summary\n\n"
-        "The Transformer replaces recurrence with multi-head self-attention entirely."
+        "## Summary\n\nThe Transformer replaces recurrence with multi-head self-attention entirely."
     )
 
     paragraphs = manager.attribute_paragraphs(answer, [ATTENTION])
@@ -192,6 +191,44 @@ def test_bracketed_prose_survives_the_identifier_rule() -> None:
     assert "[see the appendix for the derivation]" in text
 
 
+def test_latex_notation_does_not_drive_attribution() -> None:
+    """Real mis-attribution: AlexNet's LRN formula was also credited to DeepSeek-R1.
+
+    An equation-heavy paragraph reduces to {frac, alpha, sum, max, min, left,
+    beta} once tokenised -- vocabulary every maths-heavy paper shares. Stripping
+    LaTeX first means the comparison runs on subject matter instead of notation.
+    """
+    manager = CitationManager()
+    reinforcement = chunk(
+        "deepseek_r1_2025_4",
+        "deepseek_r1_2025",
+        "DeepSeek-R1",
+        "2025",
+        "The GRPO objective maximises $\\frac{1}{G}\\sum_{i=1}^{G}\\left(\\alpha "
+        "\\max(0, A_i) - \\beta \\min(1, B_i)\\right)^\\gamma$ over sampled outputs.",
+    )
+    normalisation = chunk(
+        "alexnet_2012_4",
+        "alexnet_2012",
+        "ImageNet Classification with Deep Convolutional Neural Networks",
+        "2012",
+        "Local response normalisation divides the activity of a neuron computed by "
+        "applying kernel i at position x, y by a term summed over adjacent kernel maps.",
+    )
+    answer = (
+        "Local response normalisation divides the activity of a neuron by a term "
+        "summed over adjacent kernel maps: "
+        "$b^i_{x,y} = a^i_{x,y} / \\left(k + \\alpha \\sum_{j=\\max(0,i-n/2)}"
+        "^{\\min(N-1,i+n/2)} (a^j_{x,y})^2\\right)^\\beta$"
+    )
+
+    sources = manager.attribute_paragraphs(answer, [normalisation, reinforcement])[0].sources
+    cited = {source.paper_id for source in sources}
+
+    assert "alexnet_2012" in cited
+    assert "deepseek_r1_2025" not in cited
+
+
 def test_one_paper_across_two_chunks_is_attributed_once() -> None:
     manager = CitationManager()
     second = chunk(
@@ -209,7 +246,7 @@ def test_one_paper_across_two_chunks_is_attributed_once() -> None:
 
 
 def test_the_section_is_carried_through() -> None:
-    """"According to the Model Architecture section" is only possible with this."""
+    """ "According to the Model Architecture section" is only possible with this."""
     manager = CitationManager()
     answer = "The Transformer replaces recurrence with multi-head self-attention."
 

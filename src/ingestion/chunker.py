@@ -139,9 +139,7 @@ class TextChunker:
 
         raw_chunks = [c for c in self.splitter.split_text(text) if c.strip()]
         if not raw_chunks:
-            raise ChunkingError(
-                f"Splitting produced no usable chunks from {len(text)} characters."
-            )
+            raise ChunkingError(f"Splitting produced no usable chunks from {len(text)} characters.")
 
         chunks: list[dict[str, Any]] = []
         for offset, chunk_text in enumerate(raw_chunks):
@@ -217,9 +215,7 @@ class TextChunker:
             heading = self._match_heading(line)
             if heading is not None:
                 if any(part.strip() for part in current["body"]):
-                    sections.append(
-                        {"title": current["title"], "text": "\n".join(current["body"])}
-                    )
+                    sections.append({"title": current["title"], "text": "\n".join(current["body"])})
                 current = {"title": heading, "body": []}
             else:
                 current["body"].append(line)

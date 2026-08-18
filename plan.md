@@ -365,17 +365,25 @@ Add `make eval` so the numbers are reproducible, and wire a small subset into CI
 
 ---
 
-# Milestone 3 — Make it real software (~1.5 weeks) ← NEXT
+# Milestone 3 — Make it real software (~1.5 weeks) ⭐ DONE, except 3.6
 
-**Start here.** M1 and M2 are done and pushed. The project now measures itself honestly; what it does not yet do is run like software anyone else could deploy.
+**Done and pushed:** tests (3.1), the FastAPI layer (3.2), Docker and CI (3.3),
+the React frontend replacing Streamlit (3.4), and the Cloud Run deployment
+(3.5). The one piece left is **3.6 — observability and cost tracking**, which
+is the only thing in this milestone that would produce a second class of
+resume number.
+
+The original ordering note is kept below because the reasoning still holds.
 
 Order matters. 3.1 first — the test suite already exists in outline (36 tests) but covers the newest code best and the oldest code not at all, which is backwards. Then 3.2 and 3.3, which are what turn "a Streamlit script" into "a service".
 
 ### 3.1 — Tests ✅ DONE
 
-**254 tests, 47% line coverage**, all offline: no test calls a real API, and the
+**307 tests, 50% line coverage**, all offline: no test calls a real API, and the
 retry policy's sleeps are patched rather than waited out. `make test` runs the
 suite in about 40 seconds; `make check` runs lint, types and tests together.
+The count grew from 254 to 307 as 3.2 and 3.4 added API and citation-structure
+tests.
 
 Coverage on the modules this milestone targeted:
 
@@ -385,7 +393,7 @@ Coverage on the modules this milestone targeted:
 | `eval/metrics.py` | 97% |
 | `chunker.py` | 92% |
 | `hybrid_search.py` | 74% |
-| `citation_manager.py` | 66% |
+| `citation_manager.py` | 71% |
 | `keyword_search.py` | 65% |
 | `pdf_parser.py` | 64% |
 
@@ -494,14 +502,64 @@ Pydantic request/response models throughout. **Stream the answer** — your mult
 
 Make ingestion async with a background worker so upload doesn't block. Then refactor `app.py` to call the API rather than importing `src/` directly — that separation is itself the architectural point.
 
-### 3.3 — Docker + CI
+### 3.3 — Docker + CI ✅ DONE
+
+Multi-stage `Dockerfile` (node build → python runtime) plus
+`.github/workflows/ci.yml` with three jobs: Python checks, frontend build, and
+a Docker build that boots the container and asserts `/health` reports `ok` with
+8 papers.
+
+Decisions worth defending:
+
+- **The corpus is indexed at build time.** `fetch_corpus.py` downloads the eight
+  papers and `index_papers.py` embeds them, so the vector store ships inside the
+  image. A Hugging Face Space has an ephemeral filesystem; a disk-backed
+  ChromaDB would lose all 441 chunks on every restart. Baking it in deletes the
+  problem rather than solving it with a database. The PDFs are then removed —
+  ~28MB that the index no longer needs.
+- **CPU-only torch, installed explicitly first.** The default wheels drag in
+  ~2.5GB of CUDA that no CPU Space can use.
+- **The embedding model is baked in.** Downloading at boot adds ~90s to a cold
+  start and makes startup depend on huggingface.co being up.
+- **The build fails if fewer than 8 papers index.** An image that quietly serves
+  a smaller corpus than the evaluation measured is worse than a failed build.
+- **One uvicorn worker.** Job state in `api/jobs.py` is per-process, so a second
+  worker would let a client poll the one that does not hold its job.
+- **No `docker-compose.yml`.** A Space is one container; a compose file for
+  API + Streamlit + Chroma would describe a deployment that never happens.
+
+Two problems fixed on the way:
+
+- **`fetch_corpus.py` downloaded the wrong papers.** Its list was stale — RoBERTa,
+  DistilBERT, ALBERT, DPR — and only three of eight overlapped with what is
+  actually indexed. A Docker build using it would have shipped a demo answering
+  from a different corpus than `docs/EVALUATION.md` describes. The list now
+  matches, filenames are the paper ids so no alias file is needed, and a failed
+  download raises instead of warning.
+- **`ruff format` had never been run.** CI checks it, so 40 files were
+  reformatted rather than shipping a check that fails on the first run.
+
+`app.py` and Streamlit are gone. The React frontend replaced them, and the
+dependency, Makefile target, lint exemption and docs references went with it.
+
+#### Original notes
+
 
 - `Dockerfile` — multi-stage, non-root user, pinned base image. Pre-download the embedding model into the image so cold start isn't 90 seconds. **Runs ingestion at build time** so the corpus ships inside the image (see 3.5).
 - **No `docker-compose.yml`.** A Hugging Face Space is one container, so a compose file describing API + Streamlit + Chroma would describe a deployment that never happens. Streamlit is being removed and Chroma is embedded, not a service.
 - `.github/workflows/ci.yml` — lint (`ruff`), format check (`ruff format`), type check (`mypy`), `pytest` with coverage, Docker build. On every PR.
 - Pin `requirements.txt` exactly (currently all `>=`, which means your build is not reproducible) or move to `pyproject.toml` with `uv`.
 
-### 3.4 — Replace Streamlit with a real frontend ← NEXT
+### 3.4 — Replace Streamlit with a real frontend ✅ DONE
+
+**Shipped.** React + Vite in [`frontend/`](frontend/), built into `static/` and
+served by FastAPI itself. Streamlit is gone from the repo and from
+`requirements.txt`. Both features below landed: `add_paragraph_citations` now
+returns paragraph-to-chunk structure rather than a string, so clicking a claim
+opens the passage behind it in `SourceDrawer`, and uploads report job progress
+in `LibraryDrawer`.
+
+The reasoning that led there is kept below.
 
 **Decided:** React + Vite, built to static files, served by FastAPI itself.
 
@@ -558,9 +616,40 @@ shows chunk and section counts when it lands.
 - Retrieved papers and their scores are visible, not hidden behind a chat box.
 - Uploads are labelled as session-only (see 3.5).
 
-### 3.5 — Deploy to Hugging Face Spaces
+### 3.5 — Deploy ✅ DONE
 
-**Decided:** Docker Space, one container, **corpus baked into the image**.
+**Shipped to Cloud Run** via [`deploy/cloudrun.sh`](deploy/cloudrun.sh), with
+the corpus baked into the image and the Gemini key in Secret Manager. Full
+setup, the flag-by-flag reasoning and the cold-start honesty are in
+[`docs/DEPLOY.md`](docs/DEPLOY.md).
+
+**Decided:** Google Cloud Run, one container, **corpus baked into the image**.
+
+**Hugging Face Spaces was the original target and is no longer viable.** Gradio
+and Docker Spaces now require a paid PRO plan; only Static Spaces are free, and
+a static host cannot run a Python backend with an embedding model. That also
+rules out the Gradio fallback, since Gradio is paid too.
+
+Cloud Run takes the Dockerfile unchanged — the image already reads `$PORT`,
+which is what Cloud Run injects — so nothing in the codebase changed. Setup and
+the reasoning behind each flag are in [`docs/DEPLOY.md`](docs/DEPLOY.md), with
+`deploy/cloudrun.sh` doing the work.
+
+What was rejected, and why:
+
+| Option | Verdict |
+|---|---|
+| HF PRO (~$9/mo) | Works unchanged. Rejected only because a free path exists. |
+| Render / Koyeb free | **512 MB RAM.** torch alone needs more. |
+| Slim the image with ONNX instead of torch | Genuinely free at ~600 MB, but ONNX embeddings are *near*-identical to torch, not identical. Would require re-running the BEIR evaluation before any retrieval number could still be quoted. Deferred on the same principle as pgvector. |
+| Oracle Cloud Always Free | 24 GB free forever, but you own a VM, a reverse proxy and TLS. |
+
+The honest cost of Cloud Run: **60-90 second cold starts.** A 2.95 GB image pull
+plus ~40 s of model loading and BM25 indexing. `--min-instances 1` removes it and
+leaves the free tier at roughly $10-15/month.
+
+The original Spaces reasoning is kept below, because the constraint that drove
+the design — an ephemeral filesystem — is identical on Cloud Run.
 
 The constraint that drives everything: **HF Spaces have an ephemeral
 filesystem.** Anything written to disk is lost on restart, rebuild, or wake from
@@ -602,11 +691,16 @@ make the document false — which would undo the best part of this project.
 If it happens, the retrieval evaluation gets re-run and both sets of numbers are
 published side by side.
 
-Put the public URL at the top of the README and on the resume line itself.
+**Live:** <https://researchgpt-dljnaee32a-uc.a.run.app> (`researchgpt`,
+`us-central1`), linked at the top of the README. Health check reports 597
+chunks from 8 papers on `gemini/gemini-2.5-flash`. Put the same URL on the
+resume line itself.
 
-### 3.5 — Observability and cost tracking
+### 3.6 — Observability and cost tracking ← NEXT
 
-Log per query: latency broken down by stage (retrieve / rerank / generate), tokens in/out, estimated cost, retrieved chunk ids, model used. Expose aggregates on `/metrics`. Add a small "System Stats" tab in Streamlit showing p50/p95 latency and cost per query.
+Log per query: latency broken down by stage (retrieve / rerank / generate), tokens in/out, estimated cost, retrieved chunk ids, model used. Expose aggregates on `/metrics` — the endpoint does not exist yet.
+
+Surface p50/p95 latency and cost per query in the React UI, not a Streamlit tab: a small panel in the library drawer, or a `/metrics` page the frontend fetches.
 
 This gives you a second class of resume number — **operational** ones — alongside M2's quality numbers.
 

@@ -134,10 +134,7 @@ class SemanticSearcher:
             return {"before": [], "after": []}
 
         before = [text for text, _ in ordered[max(0, target_index - window) : target_index]]
-        after = [
-            text
-            for text, _ in ordered[target_index + 1 : target_index + 1 + window]
-        ]
+        after = [text for text, _ in ordered[target_index + 1 : target_index + 1 + window]]
         return {"before": before, "after": after}
 
     def multi_query_search(
@@ -163,9 +160,7 @@ class SemanticSearcher:
         merged: dict[str, dict[str, Any]] = {}
         for query in queries:
             for result in self.search(query, top_k=top_k):
-                entry = merged.setdefault(
-                    result["id"], {"result": result, "scores": []}
-                )
+                entry = merged.setdefault(result["id"], {"result": result, "scores": []})
                 entry["scores"].append(result.get("similarity_score", 0.0))
 
         aggregators: dict[str, Callable[[list[float]], float]] = {

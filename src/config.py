@@ -10,9 +10,10 @@ This module deliberately owns all magic numbers so that evaluation sweeps
 
 from __future__ import annotations
 
+import re
 from functools import lru_cache
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import Field, SecretStr, computed_field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -51,6 +52,41 @@ class Settings(BaseSettings):
         extra="ignore",
         case_sensitive=False,
     )
+
+    @model_validator(mode="before")
+    @classmethod
+    def _clean_env_values(cls, values: Any) -> Any:
+        """Strip whitespace and inline comments from environment values.
+
+        ``python-dotenv`` and Docker's ``--env-file`` do not parse the same
+        file the same way. Given::
+
+            EMBEDDING_MODEL= all-MiniLM-L6-v2 # the default
+
+        dotenv yields ``all-MiniLM-L6-v2``; Docker passes the whole string,
+        spaces, comment and all. That produced a container which loaded
+        cleanly on a laptop and died on startup with::
+
+            Repo id must use alphanumeric chars ...:
+            'sentence-transformers/ all-MiniLM-L6-v2 # '
+
+        Config that is valid in one runner and fatal in another is a trap, and
+        a leading space in a model name is never intentional. Values are
+        cleaned here so both parsers agree.
+
+        A ``#`` is only treated as a comment when whitespace precedes it, so a
+        value that legitimately contains one (an API key, a URL fragment) is
+        left alone.
+        """
+        if not isinstance(values, dict):
+            return values
+
+        cleaned: dict[str, Any] = {}
+        for key, value in values.items():
+            if isinstance(value, str):
+                value = re.split(r"\s+#", value, maxsplit=1)[0].strip()
+            cleaned[key] = value
+        return cleaned
 
     # ------------------------------------------------------------------
     # Credentials

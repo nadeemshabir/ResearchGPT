@@ -23,6 +23,23 @@ const REMARK = [remarkGfm, remarkMath];
 // that a strict parser would take the whole answer down with it.
 const REHYPE = [[rehypeKatex, { throwOnError: false, strict: false }]];
 
+/**
+ * Rewrite LaTeX delimiters the model uses but `remark-math` does not accept.
+ *
+ * Asked for `$...$`, models still reach for `\(...\)` and `\[...\]` — the same
+ * prompt produced both on consecutive runs. Chasing that with prompt wording
+ * failed twice; normalising here always works, because both spellings mean
+ * exactly the same thing.
+ *
+ * Display form is converted first: `\[` would otherwise be left stranded once
+ * its inner content had been rewritten.
+ */
+function normaliseMathDelimiters(text: string): string {
+  return text
+    .replace(/\\\[([\s\S]+?)\\\]/g, (_match, body: string) => `$$${body}$$`)
+    .replace(/\\\(([\s\S]+?)\\\)/g, (_match, body: string) => `$${body}$`);
+}
+
 export function ProseRenderer({ children }: { children: string }) {
   return (
     <Markdown
@@ -35,7 +52,7 @@ export function ProseRenderer({ children }: { children: string }) {
         p: ({ children }) => <>{children}</>,
       }}
     >
-      {children}
+      {normaliseMathDelimiters(children)}
     </Markdown>
   );
 }

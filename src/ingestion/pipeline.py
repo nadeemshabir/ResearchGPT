@@ -46,9 +46,7 @@ class IngestionPipeline:
         self.database = database or VectorDatabase()
 
         # Fail now, with a clear message, rather than on the first query.
-        self.database.verify_embedding_model(
-            self.embedder.model_name, self.embedder.embedding_dim
-        )
+        self.database.verify_embedding_model(self.embedder.model_name, self.embedder.embedding_dim)
 
         logger.info("Ingestion pipeline ready")
 
@@ -94,9 +92,7 @@ class IngestionPipeline:
         chunks = [c for c in chunks if c["text"].strip()]
 
         if not chunks:
-            raise IngestionError(
-                f"{path.name} produced no usable chunks after cleaning."
-            )
+            raise IngestionError(f"{path.name} produced no usable chunks after cleaning.")
 
         chunk_stats = self.chunker.summarise(chunks)
         logger.info(
@@ -122,9 +118,7 @@ class IngestionPipeline:
         )
 
         elapsed = time.perf_counter() - start
-        logger.info(
-            "Ingested %r: %d chunks stored in %.2fs", paper_id, num_stored, elapsed
-        )
+        logger.info("Ingested %r: %d chunks stored in %.2fs", paper_id, num_stored, elapsed)
 
         return {
             "paper_id": paper_id,

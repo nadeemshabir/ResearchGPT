@@ -163,8 +163,7 @@ EXTRACTED INFORMATION:"""
     ) -> str:
         """Merge per-source extractions into one answer."""
         blocks = [
-            f"Source {index} ({item.get('source', f'Source {index}')}):\n"
-            f"{item.get('content', '')}"
+            f"Source {index} ({item.get('source', f'Source {index}')}):\n{item.get('content', '')}"
             for index, item in enumerate(extractions, 1)
         ]
         sources_text = "\n\n".join(blocks)
@@ -272,9 +271,7 @@ LITERATURE REVIEW:"""
         aspects: list[str] | None = None,
     ) -> str:
         """Compare two or more concepts using retrieved context."""
-        aspects_line = (
-            f"\nCompare specifically on: {', '.join(aspects)}" if aspects else ""
-        )
+        aspects_line = f"\nCompare specifically on: {', '.join(aspects)}" if aspects else ""
 
         return f"""Compare: {" vs ".join(items)}
 

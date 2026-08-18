@@ -223,9 +223,7 @@ def spearman(xs: list[float], ys: list[float]) -> float:
     rx, ry = ranks(xs), ranks(ys)
     mean_x, mean_y = sum(rx) / n, sum(ry) / n
     numerator = sum((a - mean_x) * (b - mean_y) for a, b in zip(rx, ry, strict=True))
-    denominator = math.sqrt(
-        sum((a - mean_x) ** 2 for a in rx) * sum((b - mean_y) ** 2 for b in ry)
-    )
+    denominator = math.sqrt(sum((a - mean_x) ** 2 for a in rx) * sum((b - mean_y) ** 2 for b in ry))
     return numerator / denominator if denominator else float("nan")
 
 
@@ -291,9 +289,9 @@ def report(records: list[dict[str, Any]], grades: dict[str, Any]) -> None:
         print(f"    Cohen's kappa @{cut:.2f}   {tuned:+.3f}   (best cut-off)")
         print(f"    Spearman rho          {rho:+.3f}")
         if yes_scores:
-            print(f"    judge score, you=yes  {sum(yes_scores)/len(yes_scores):.3f}")
+            print(f"    judge score, you=yes  {sum(yes_scores) / len(yes_scores):.3f}")
         if no_scores:
-            print(f"    judge score, you=no   {sum(no_scores)/len(no_scores):.3f}")
+            print(f"    judge score, you=no   {sum(no_scores) / len(no_scores):.3f}")
         print()
 
     print("  How to read this:")

@@ -39,9 +39,7 @@ def test_detects_no_information_phrasing() -> None:
 
 
 def test_detects_cannot_answer_phrasing() -> None:
-    assert looks_like_refusal(
-        "I cannot determine the answer from the provided excerpts."
-    )
+    assert looks_like_refusal("I cannot determine the answer from the provided excerpts.")
 
 
 def test_detects_the_harness_marker() -> None:
@@ -77,7 +75,7 @@ def test_a_real_answer_is_not_a_refusal() -> None:
 
 
 def test_a_scientific_negative_finding_is_not_a_refusal() -> None:
-    """"No evidence that X causes Y" is a result, not a refusal.
+    """ "No evidence that X causes Y" is a result, not a refusal.
 
     This is why every pattern requires a source word: without it, papers
     reporting null results would be misread as declining to answer.
@@ -86,6 +84,23 @@ def test_a_scientific_negative_finding_is_not_a_refusal() -> None:
         "The authors found no evidence that increasing model depth beyond 16 "
         "layers improves accuracy, and report that gains do not appear at any "
         "scale they tested."
+    )
+
+
+def test_a_refusal_that_explains_what_the_corpus_covers_is_still_a_refusal() -> None:
+    """Real output from the deployed service, and a miss for the length rule.
+
+    The model declines, then explains what the sources are about instead. That
+    pushed it past the length cut-off and it was scored as an answer. Position
+    separates the two cases: a refusal *leads* with the disclaimer.
+    """
+    assert looks_like_refusal(
+        "The provided sources do not contain any information about the best recipe "
+        "for chocolate cake. Source 1 explicitly states that it discusses attention "
+        "mechanisms in the Transformer architecture, Source 2 covers convolutional "
+        "networks for image classification, and Source 3 concerns reinforcement "
+        "learning from human feedback. None of them relate to cooking or recipes "
+        "of any kind, so no answer can be given from this corpus."
     )
 
 

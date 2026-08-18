@@ -17,9 +17,30 @@ logger = get_logger(__name__)
 #: Function words that carry no retrieval signal.
 STOPWORDS: frozenset[str] = frozenset(
     {
-        "a", "an", "and", "are", "as", "at", "be", "by", "for", "from", "has",
-        "he", "in", "is", "it", "its", "of", "on", "that", "the", "to", "was",
-        "will", "with",
+        "a",
+        "an",
+        "and",
+        "are",
+        "as",
+        "at",
+        "be",
+        "by",
+        "for",
+        "from",
+        "has",
+        "he",
+        "in",
+        "is",
+        "it",
+        "its",
+        "of",
+        "on",
+        "that",
+        "the",
+        "to",
+        "was",
+        "will",
+        "with",
     }
 )
 

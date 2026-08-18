@@ -22,9 +22,11 @@ _configured = False
 
 #: Fields already present on every LogRecord; anything else a caller passes via
 #: ``extra=`` is treated as structured context worth serialising.
-_RESERVED_RECORD_FIELDS = frozenset(
-    vars(logging.LogRecord("", 0, "", 0, "", (), None)).keys()
-) | {"asctime", "message", "taskName"}
+_RESERVED_RECORD_FIELDS = frozenset(vars(logging.LogRecord("", 0, "", 0, "", (), None)).keys()) | {
+    "asctime",
+    "message",
+    "taskName",
+}
 
 
 class JsonFormatter(logging.Formatter):

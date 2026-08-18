@@ -187,8 +187,7 @@ class PDFParser:
             with open(path, "rb") as handle:
                 if handle.read(5) != b"%PDF-":
                     raise CorruptPDFError(
-                        f"{path.name} does not begin with the %PDF- header; "
-                        "it is not a valid PDF.",
+                        f"{path.name} does not begin with the %PDF- header; it is not a valid PDF.",
                         path=str(path),
                     )
         except OSError as exc:

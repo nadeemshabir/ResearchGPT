@@ -50,9 +50,7 @@ def translate(client: LLMClient, message: str) -> Exception:
         "RESOURCE_EXHAUSTED: quota exceeded",
     ],
 )
-def test_rate_limit_messages_are_classified_as_rate_limits(
-    client: LLMClient, message: str
-) -> None:
+def test_rate_limit_messages_are_classified_as_rate_limits(client: LLMClient, message: str) -> None:
     assert isinstance(translate(client, message), LLMRateLimitError)
 
 
@@ -83,9 +81,7 @@ def test_the_real_groq_daily_limit_message_is_retryable(client: LLMClient) -> No
         "connection aborted",
     ],
 )
-def test_timeout_messages_are_classified_as_timeouts(
-    client: LLMClient, message: str
-) -> None:
+def test_timeout_messages_are_classified_as_timeouts(client: LLMClient, message: str) -> None:
     assert isinstance(translate(client, message), LLMTimeoutError)
 
 
@@ -145,9 +141,7 @@ def test_auth_errors_name_the_environment_variable_to_fix(client: LLMClient) -> 
         "something entirely unexpected",
     ],
 )
-def test_unrecognised_failures_become_provider_errors(
-    client: LLMClient, message: str
-) -> None:
+def test_unrecognised_failures_become_provider_errors(client: LLMClient, message: str) -> None:
     assert isinstance(translate(client, message), LLMProviderError)
 
 

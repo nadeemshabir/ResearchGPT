@@ -115,9 +115,7 @@ def build_judge_embeddings() -> Any:
     )
 
 
-def run_pipeline(
-    generator: AnswerGenerator, questions: list[TestQuestion]
-) -> list[dict[str, Any]]:
+def run_pipeline(generator: AnswerGenerator, questions: list[TestQuestion]) -> list[dict[str, Any]]:
     """Answer every question with the real pipeline and collect the traces."""
     records: list[dict[str, Any]] = []
 
@@ -204,7 +202,9 @@ def score_with_ragas(
 
     logger.info(
         "Scoring %d answers with RAGAS (judge: %s/%s)",
-        len(scorable), judge_provider, judge_model,
+        len(scorable),
+        judge_provider,
+        judge_model,
     )
     result = evaluate(
         dataset,
@@ -227,9 +227,7 @@ def score_with_ragas(
             column = frame[metric].dropna()
             scores[metric] = round(float(column.mean()), 4) if len(column) else None
             scores[f"{metric}_n"] = int(len(column))
-            per_question[metric] = [
-                None if v != v else round(float(v), 4) for v in frame[metric]
-            ]
+            per_question[metric] = [None if v != v else round(float(v), 4) for v in frame[metric]]
 
     # Attach per-question scores so calibration can sample specific rows.
     for offset, record in enumerate(scorable):
@@ -333,9 +331,7 @@ def main() -> int:
         llm_model=args.generator_model,
         retrieval_system=retrieval,
     )
-    print(
-        f"generator: {generator.llm_client.provider}/{generator.llm_client.model}\n"
-    )
+    print(f"generator: {generator.llm_client.provider}/{generator.llm_client.model}\n")
 
     records = run_pipeline(generator, questions)
     refused = sum(1 for r in records if r["refused"])
