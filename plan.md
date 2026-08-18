@@ -365,17 +365,25 @@ Add `make eval` so the numbers are reproducible, and wire a small subset into CI
 
 ---
 
-# Milestone 3 — Make it real software (~1.5 weeks) ← NEXT
+# Milestone 3 — Make it real software (~1.5 weeks) ⭐ DONE, except 3.6
 
-**Start here.** M1 and M2 are done and pushed. The project now measures itself honestly; what it does not yet do is run like software anyone else could deploy.
+**Done and pushed:** tests (3.1), the FastAPI layer (3.2), Docker and CI (3.3),
+the React frontend replacing Streamlit (3.4), and the Cloud Run deployment
+(3.5). The one piece left is **3.6 — observability and cost tracking**, which
+is the only thing in this milestone that would produce a second class of
+resume number.
+
+The original ordering note is kept below because the reasoning still holds.
 
 Order matters. 3.1 first — the test suite already exists in outline (36 tests) but covers the newest code best and the oldest code not at all, which is backwards. Then 3.2 and 3.3, which are what turn "a Streamlit script" into "a service".
 
 ### 3.1 — Tests ✅ DONE
 
-**254 tests, 47% line coverage**, all offline: no test calls a real API, and the
+**307 tests, 50% line coverage**, all offline: no test calls a real API, and the
 retry policy's sleeps are patched rather than waited out. `make test` runs the
 suite in about 40 seconds; `make check` runs lint, types and tests together.
+The count grew from 254 to 307 as 3.2 and 3.4 added API and citation-structure
+tests.
 
 Coverage on the modules this milestone targeted:
 
@@ -385,7 +393,7 @@ Coverage on the modules this milestone targeted:
 | `eval/metrics.py` | 97% |
 | `chunker.py` | 92% |
 | `hybrid_search.py` | 74% |
-| `citation_manager.py` | 66% |
+| `citation_manager.py` | 71% |
 | `keyword_search.py` | 65% |
 | `pdf_parser.py` | 64% |
 
@@ -542,7 +550,16 @@ dependency, Makefile target, lint exemption and docs references went with it.
 - `.github/workflows/ci.yml` — lint (`ruff`), format check (`ruff format`), type check (`mypy`), `pytest` with coverage, Docker build. On every PR.
 - Pin `requirements.txt` exactly (currently all `>=`, which means your build is not reproducible) or move to `pyproject.toml` with `uv`.
 
-### 3.4 — Replace Streamlit with a real frontend ← NEXT
+### 3.4 — Replace Streamlit with a real frontend ✅ DONE
+
+**Shipped.** React + Vite in [`frontend/`](frontend/), built into `static/` and
+served by FastAPI itself. Streamlit is gone from the repo and from
+`requirements.txt`. Both features below landed: `add_paragraph_citations` now
+returns paragraph-to-chunk structure rather than a string, so clicking a claim
+opens the passage behind it in `SourceDrawer`, and uploads report job progress
+in `LibraryDrawer`.
+
+The reasoning that led there is kept below.
 
 **Decided:** React + Vite, built to static files, served by FastAPI itself.
 
@@ -599,7 +616,12 @@ shows chunk and section counts when it lands.
 - Retrieved papers and their scores are visible, not hidden behind a chat box.
 - Uploads are labelled as session-only (see 3.5).
 
-### 3.5 — Deploy
+### 3.5 — Deploy ✅ DONE
+
+**Shipped to Cloud Run** via [`deploy/cloudrun.sh`](deploy/cloudrun.sh), with
+the corpus baked into the image and the Gemini key in Secret Manager. Full
+setup, the flag-by-flag reasoning and the cold-start honesty are in
+[`docs/DEPLOY.md`](docs/DEPLOY.md).
 
 **Decided:** Google Cloud Run, one container, **corpus baked into the image**.
 
@@ -669,11 +691,16 @@ make the document false — which would undo the best part of this project.
 If it happens, the retrieval evaluation gets re-run and both sets of numbers are
 published side by side.
 
-Put the public URL at the top of the README and on the resume line itself.
+**Live:** <https://researchgpt-dljnaee32a-uc.a.run.app> (`researchgpt`,
+`us-central1`), linked at the top of the README. Health check reports 597
+chunks from 8 papers on `gemini/gemini-2.5-flash`. Put the same URL on the
+resume line itself.
 
-### 3.5 — Observability and cost tracking
+### 3.6 — Observability and cost tracking ← NEXT
 
-Log per query: latency broken down by stage (retrieve / rerank / generate), tokens in/out, estimated cost, retrieved chunk ids, model used. Expose aggregates on `/metrics`. Add a small "System Stats" tab in Streamlit showing p50/p95 latency and cost per query.
+Log per query: latency broken down by stage (retrieve / rerank / generate), tokens in/out, estimated cost, retrieved chunk ids, model used. Expose aggregates on `/metrics` — the endpoint does not exist yet.
+
+Surface p50/p95 latency and cost per query in the React UI, not a Streamlit tab: a small panel in the library drawer, or a `/metrics` page the frontend fetches.
 
 This gives you a second class of resume number — **operational** ones — alongside M2's quality numbers.
 
