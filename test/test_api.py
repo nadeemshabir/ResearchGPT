@@ -17,6 +17,7 @@ from fastapi.testclient import TestClient
 
 from api import dependencies
 from api.jobs import JobRegistry
+from src.config import Settings
 
 CHUNK = {
     "id": "c1",
@@ -172,6 +173,12 @@ def stubs(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
         monkeypatch.setattr(f"{module}.get_jobs", lambda: jobs, raising=False)
         monkeypatch.setattr(f"{module}.get_generator", fake_generator, raising=False)
     monkeypatch.setattr("api.main.warm_up", lambda: None, raising=False)
+
+    # Settings too, or /health reads the developer's .env: with a key present
+    # it reports "ok", without one "unhealthy". Pinning it keeps the health
+    # tests about the corpus, which is what they are checking.
+    stub_settings = Settings(_env_file=None, groq_api_key="test-key", llm_provider="groq")  # type: ignore[call-arg]
+    monkeypatch.setattr("api.main.get_settings", lambda: stub_settings, raising=False)
 
     return {
         "database": database,
