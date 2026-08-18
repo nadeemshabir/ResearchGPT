@@ -55,9 +55,7 @@ class EmbeddingGenerator:
 
         embedding_dim = self.model.get_sentence_embedding_dimension()
         if embedding_dim is None:
-            raise IngestionError(
-                f"Model {self.model_name!r} did not report an embedding dimension"
-            )
+            raise IngestionError(f"Model {self.model_name!r} did not report an embedding dimension")
         self.embedding_dim: int = embedding_dim
         logger.info("Embedding model ready (%d dimensions)", self.embedding_dim)
 
