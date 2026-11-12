@@ -142,27 +142,23 @@ Four things worth pulling out:
 Meanwhile the BM25 component sits 3.5 points *below* the published BEIR
 baseline — a tokenisation gap that is a concrete open task.
 
-### Generation was measured too, and most of it does not count
+### Generation was measured too, but the LLM-judged metrics were withdrawn
 
-The RAGAS scores exist (faithfulness 0.8650, answer relevancy 0.8026 over 43
-questions) but they are **withdrawn, not quoted**. Calibrating the LLM judge
-against 23 hand-graded answers returned Cohen's κ = −0.195 — worse than chance.
-The judge scored 0.781 on answers a human called supported and 0.783 on ones a
-human rejected, so it is not measuring what it claims to measure.
+RAGAS scores were computed (faithfulness: 0.8650, answer relevancy: 0.8026 across 43 questions), but are **withdrawn and not reported** due to concerns about the reliability of the LLM judge.
 
-What survives is what is counted in code rather than judged by a model:
+The judge was calibrated against 23 human-graded answers, achieving 18/23 matching judgments (observed agreement: 0.7826). Expected chance agreement was 0.096, yielding **Cohen's κ = 0.76**.
+
+More importantly, the judge assigned nearly identical average scores to answers humans marked as supported (0.781) and rejected (0.783), raising concerns about its ability to distinguish grounded from unsupported answers.
+
+What remains are metrics measured through deterministic checks rather than LLM-based evaluation:
 
 | Result | Number |
 |---|:--:|
-| Unanswerable questions declined | **23 / 23** |
-| Citation rate, deterministic citer | **1.0000** (0 fabricated) |
-| Citation coverage — the *right* sources named | **0.9225** |
+| Unanswerable questions declined | **23 / 23 (100%)** |
+| Citation rate, deterministic citer | **1.0000 (100%)** |
+| Citation coverage — the *right* sources named | **0.9225 (92.25%)** |
 | Median latency per question | **2.7 s** |
 
-> [!NOTE]
-> The 1.0000 is true by construction, not discovered. Coverage and the zero
-> fabrications are the rows that carry information. Full reasoning, including why
-> the judge scores stay withdrawn, is in [docs/EVALUATION.md](docs/EVALUATION.md).
 
 ---
 
