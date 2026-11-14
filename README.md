@@ -161,6 +161,7 @@ What remains are metrics measured through deterministic checks rather than LLM-b
 | Citation coverage — the *right* sources named | **0.9225 (92.25%)** |
 | Median latency per question | **2.7 s** |
 
+
 ---
 
 ## ⚡ Quick start
