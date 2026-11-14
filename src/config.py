@@ -21,6 +21,11 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 LLMProvider = Literal["groq", "openai", "gemini"]
+#: Where the Chroma collection lives. ``local`` is an on-disk directory, which
+#: is correct for a laptop and wrong for Cloud Run: the filesystem is
+#: ephemeral and not shared between instances, so an upload indexed by one
+#: instance is invisible to the next and gone after a restart.
+ChromaMode = Literal["local", "http", "cloud"]
 PDFMethod = Literal["pymupdf", "pdfplumber", "pypdf2"]
 CitationStyle = Literal["inline", "numbered", "apa"]
 FusionMethod = Literal["weighted", "rrf"]
@@ -160,8 +165,33 @@ class Settings(BaseSettings):
     #: ``None`` means auto-detect (cuda > mps > cpu).
     embedding_device: str | None = None
 
+    #: Backend selection. See :data:`ChromaMode`.
+    chroma_mode: ChromaMode = "local"
+    #: ``local`` only. Ignored by the other two modes.
     chroma_db_path: Path = PROJECT_ROOT / "data" / "chroma_db"
     collection_name: str = "research_papers"
+
+    #: ``http`` only: a Chroma server you run yourself.
+    chroma_host: str | None = None
+    chroma_port: int = Field(default=8000, gt=0, le=65535)
+    chroma_ssl: bool = False
+
+    #: ``cloud`` only: Chroma Cloud credentials.
+    chroma_api_key: SecretStr | None = None
+    chroma_tenant: str | None = None
+    chroma_database: str | None = None
+
+    # ------------------------------------------------------------------
+    # Uploaded PDFs
+    # ------------------------------------------------------------------
+    #: GCS bucket holding the uploaded PDFs. Unset means the local directory
+    #: below, which is the right default for development and the wrong one for
+    #: Cloud Run -- the same ephemeral-filesystem problem as the vector store.
+    upload_bucket: str | None = None
+    #: Prefix inside the bucket, so one bucket can serve several environments.
+    upload_prefix: str = "papers"
+    #: Fallback location when ``upload_bucket`` is unset.
+    upload_dir: Path = PROJECT_ROOT / "data" / "uploads"
 
     # ------------------------------------------------------------------
     # Retrieval
@@ -260,6 +290,23 @@ class Settings(BaseSettings):
                 "semantic_weight and keyword_weight cannot both be zero; "
                 "at least one retrieval signal must contribute."
             )
+        if self.chroma_mode == "http" and not self.chroma_host:
+            raise ValueError("CHROMA_MODE=http requires CHROMA_HOST (the Chroma server's address).")
+        if self.chroma_mode == "cloud":
+            missing = [
+                name
+                for name, value in (
+                    ("CHROMA_API_KEY", self.chroma_api_key),
+                    ("CHROMA_TENANT", self.chroma_tenant),
+                    ("CHROMA_DATABASE", self.chroma_database),
+                )
+                if not value
+            ]
+            if missing:
+                raise ValueError(
+                    f"CHROMA_MODE=cloud requires {', '.join(missing)}. "
+                    f"Find them on the Chroma Cloud dashboard."
+                )
         if self.top_k_rerank > self.top_k_retrieve:
             raise ValueError(
                 f"top_k_rerank ({self.top_k_rerank}) cannot exceed top_k_retrieve "

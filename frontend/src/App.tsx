@@ -30,15 +30,27 @@ interface Turn {
   error: string | null;
 }
 
+// Generic on purpose. These used to name scaled dot-product attention, RLHF
+// and AlexNet's top-5 error, because the deployment shipped with those eight
+// papers indexed. It no longer ships with any, so a question about a specific
+// paper would be a question the library cannot answer until someone uploads
+// that paper.
 const EXAMPLES = [
-  "What is scaled dot-product attention and why divide by the square root of d_k?",
-  "How does RLHF differ from supervised fine-tuning?",
-  "What are the three developmental paradigms of RAG?",
-  "What top-5 error rate did AlexNet reach on ImageNet?",
+  "What problem does this paper set out to solve?",
+  "Summarise the method in plain language.",
+  "What results are reported, and on what data?",
+  "Which limitations do the authors acknowledge?",
 ];
 
-/** Uploads do not survive a restart on the deployed demo. */
-const EPHEMERAL = true;
+/**
+ * Whether uploads are lost on restart.
+ *
+ * False now: the deployment keeps PDFs in a bucket and its vector store is
+ * remote, so both outlive the container. Set it to true for a deployment
+ * running on local disk (CHROMA_MODE=local with no UPLOAD_BUCKET), where the
+ * warning it shows is accurate.
+ */
+const EPHEMERAL = false;
 
 export default function App() {
   const [health, setHealth] = useState<Health | null>(null);

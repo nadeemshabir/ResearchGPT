@@ -11,7 +11,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, cast
 
-from src.config import get_settings
+from src.config import ChromaMode, get_settings
 from src.exceptions import EmbeddingDimensionMismatchError, VectorStoreError
 from src.utils.logging import get_logger
 
@@ -29,37 +29,87 @@ class VectorDatabase:
         self,
         db_path: str | Path | None = None,
         collection_name: str | None = None,
+        mode: ChromaMode | None = None,
     ):
         """
         Args:
-            db_path: Directory for the on-disk store. Defaults to
-                ``Settings.chroma_db_path``.
+            db_path: Directory for an on-disk store. Passing one selects
+                ``local`` mode regardless of configuration, which is what the
+                evaluation scripts want: they keep their own store beside the
+                application's.
             collection_name: Defaults to ``Settings.collection_name``.
+            mode: ``local``, ``http`` or ``cloud``. Defaults to
+                ``Settings.chroma_mode``.
 
         Raises:
             VectorStoreError: The store could not be opened or created.
         """
         settings = get_settings()
-        self.db_path = Path(db_path) if db_path else settings.chroma_db_path
+        self.mode: ChromaMode = "local" if db_path else (mode or settings.chroma_mode)
         self.collection_name = collection_name or settings.collection_name
+        self.db_path = (
+            Path(db_path)
+            if db_path
+            else (settings.chroma_db_path if self.mode == "local" else None)
+        )
 
-        self.db_path.mkdir(parents=True, exist_ok=True)
         logger.info(
-            "Opening vector store at %s (collection %r)", self.db_path, self.collection_name
+            "Opening vector store (mode=%s, location=%s, collection=%r)",
+            self.mode,
+            self.location,
+            self.collection_name,
         )
 
         try:
-            import chromadb
-
-            self.client = chromadb.PersistentClient(path=str(self.db_path))
+            self.client = self._build_client(settings)
             self.collection = self.client.get_or_create_collection(
                 name=self.collection_name,
                 metadata={"description": "Research paper chunk embeddings"},
             )
         except Exception as exc:  # noqa: BLE001 - typed error for callers
-            raise VectorStoreError(f"Could not open vector store at {self.db_path}: {exc}") from exc
+            raise VectorStoreError(
+                f"Could not open vector store ({self.mode}, {self.location}): {exc}"
+            ) from exc
 
         logger.info("Collection %r holds %d chunks", self.collection_name, self.count())
+
+    def _build_client(self, settings: Any) -> Any:
+        """Create the Chroma client for the selected mode.
+
+        The three clients differ only in where the data sits; every method
+        below is written against the collection, not the client, so nothing
+        else in the codebase has to know which one is in use.
+        """
+        import chromadb
+
+        if self.mode == "http":
+            return chromadb.HttpClient(
+                host=str(settings.chroma_host),
+                port=int(settings.chroma_port),
+                ssl=bool(settings.chroma_ssl),
+            )
+
+        if self.mode == "cloud":
+            return chromadb.CloudClient(
+                api_key=settings.chroma_api_key.get_secret_value(),
+                tenant=str(settings.chroma_tenant),
+                database=str(settings.chroma_database),
+            )
+
+        assert self.db_path is not None  # noqa: S101 - guaranteed by __init__
+        self.db_path.mkdir(parents=True, exist_ok=True)
+        return chromadb.PersistentClient(path=str(self.db_path))
+
+    @property
+    def location(self) -> str:
+        """Human-readable description of where the collection lives."""
+        settings = get_settings()
+        if self.mode == "http":
+            scheme = "https" if settings.chroma_ssl else "http"
+            return f"{scheme}://{settings.chroma_host}:{settings.chroma_port}"
+        if self.mode == "cloud":
+            return f"chroma-cloud/{settings.chroma_tenant}/{settings.chroma_database}"
+        return str(self.db_path)
 
     # ------------------------------------------------------------------
     # Provenance
@@ -301,7 +351,11 @@ class VectorDatabase:
             "total_chunks": total_chunks,
             "total_papers": len(papers),
             "collection_name": self.collection_name,
-            "db_path": str(self.db_path),
+            "mode": self.mode,
+            "location": self.location,
+            # Kept for backwards compatibility with callers that read it.
+            # ``location`` is the one to use: it is meaningful in every mode.
+            "db_path": str(self.db_path) if self.db_path else self.location,
             "embedding_model": metadata.get(_MODEL_KEY, "unknown"),
             "embedding_dim": metadata.get(_DIM_KEY),
         }

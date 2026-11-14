@@ -1,22 +1,28 @@
-"""Download the demo corpus into ``data/raw/``.
+"""Download the evaluation corpus into ``data/raw/``.
+
+**This is a local tool, not part of any deployment.** The Dockerfile used to
+run it at build time and bake the resulting vector store into the image, which
+meant every deployment shipped these eight papers to every user whether or not
+anyone wanted them. The deployed service now starts empty and answers from
+whatever its users upload.
+
+The eight papers below are still what the evaluation sets in ``eval/data/``
+were written against -- the questions, the hand grades and the unanswerable
+set all refer to them -- so reproducing a number from ``docs/EVALUATION.md``
+means fetching and indexing exactly this list. That is the only reason this
+file still exists.
 
 Papers are not committed to the repository: they are large, and redistributing
 them is a licensing question this project should not answer. Everything listed
-here is openly available from arXiv or NeurIPS proceedings, so anyone cloning
-the repo -- or the Docker build -- can reconstruct the same corpus.
+here is openly available from arXiv or NeurIPS proceedings.
 
-**This list is the corpus.** The Dockerfile runs this script and then
-``index_papers.py`` at build time, so the vector store ships inside the image;
-a Hugging Face Space has an ephemeral filesystem and would otherwise lose every
-chunk on restart. If this list drifts from what is actually indexed, the
-deployed demo silently answers from a different set of papers than the
-evaluation measured.
-
-Filenames are the paper ids. ``index_papers.clean_id`` turns ``attention_2017``
-into exactly that, so no alias file is needed for a fresh build.
+Filenames are the paper ids. ``src.ingestion.ids.clean_paper_id`` turns
+``attention_2017`` into exactly that, so no alias file is needed for a fresh
+fetch.
 
 Usage:
     python scripts/fetch_corpus.py [--out data/raw] [--force]
+    python scripts/index_papers.py            # then index what was fetched
 """
 
 from __future__ import annotations
@@ -38,6 +44,8 @@ _ARXIV = "https://arxiv.org/pdf/{}"
 _NEURIPS = "https://proceedings.neurips.cc/paper_files/paper/{year}/file/{hash}-Paper.pdf"
 
 #: (paper_id, url). The paper_id becomes the filename and the citation key.
+#: Changing this list invalidates the evaluation sets in ``eval/data/``, which
+#: ask questions about these specific papers.
 #:
 #: AlexNet is the odd one out: it predates arXiv preprinting for this venue and
 #: exists only in the NeurIPS proceedings.

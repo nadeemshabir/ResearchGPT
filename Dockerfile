@@ -1,13 +1,22 @@
 # Multi-stage build for a single container serving the API and the UI.
 #
-# The corpus is indexed at BUILD time and the vector store ships inside the
-# image. A Hugging Face Space has an ephemeral filesystem: anything written at
-# runtime is lost on restart, rebuild, or wake from sleep, which would empty a
-# disk-backed ChromaDB every time. Baking it in deletes the problem rather than
-# solving it with a database.
+# The image ships NO papers. It used to: the corpus was fetched and indexed at
+# build time and the vector store was baked into the image, because the
+# filesystem is ephemeral and a disk-backed ChromaDB would be emptied by every
+# restart. That solved the wrong problem -- it made eight fixed papers the only
+# thing the deployment could ever answer from, and shipped them to every user
+# of every deployment.
+#
+# The ephemeral filesystem is now handled where it belongs: the vector store is
+# remote (CHROMA_MODE=cloud or http) and uploaded PDFs go to a bucket
+# (UPLOAD_BUCKET). Both survive a restart and are shared by every instance.
 #
 # Build:  docker build -t researchgpt .
-# Run:    docker run -p 7860:7860 -e GEMINI_API_KEY=... researchgpt
+# Run:    docker run -p 7860:7860 \
+#             -e GEMINI_API_KEY=... \
+#             -e CHROMA_MODE=cloud -e CHROMA_API_KEY=... \
+#             -e CHROMA_TENANT=... -e CHROMA_DATABASE=... \
+#             -e UPLOAD_BUCKET=... researchgpt
 
 # --- stage 1: frontend ------------------------------------------------------
 FROM node:22-slim AS frontend
@@ -73,38 +82,30 @@ SentenceTransformer('all-MiniLM-L6-v2')" \
 
 COPY src/ ./src/
 COPY scripts/ ./scripts/
-
-# Fetch and index the corpus. Both steps fail the build rather than producing an
-# image that quietly serves fewer papers than the evaluation measured.
-RUN python scripts/fetch_corpus.py \
-    && python scripts/index_papers.py \
-    && python -c "\
-import sys; sys.path.insert(0, '.'); \
-from src.ingestion.database import VectorDatabase; \
-stats = VectorDatabase().get_stats(); \
-print('indexed', stats['total_chunks'], 'chunks from', stats['total_papers'], 'papers'); \
-sys.exit(0 if stats['total_papers'] == 8 else 1)" \
-    # The PDFs are only needed to build the index; ~60MB of them are not.
-    && rm -rf data/raw/*.pdf
-
 COPY api/ ./api/
 COPY --from=frontend /static ./static/
 
-# Non-root. The vector store is read-only at runtime -- nothing is written
-# outside /tmp -- so the app never needs to own anything it can modify.
+# Non-root. Uploads are streamed through /tmp and then handed to the bucket,
+# and the vector store is remote, so nothing durable is written inside the
+# container. /app/data exists for the local-fallback modes (CHROMA_MODE=local,
+# no UPLOAD_BUCKET), which are for development, not for this deployment.
 RUN useradd --create-home --uid 10001 app \
+    && mkdir -p /app/data \
     && chown -R app:app /app
 USER app
 
 EXPOSE 7860
 
-# Reports `degraded` on an empty corpus rather than failing, so a healthy
-# container with nothing indexed is still visible as a problem without being
-# restarted for it.
+# An empty corpus is healthy: every paper arrives by upload, so a container
+# with nothing indexed is a deployment nobody has uploaded to yet. The check
+# fails only when a dependency -- the vector store, the model, the bucket --
+# cannot be reached.
 HEALTHCHECK --interval=30s --timeout=10s --start-period=90s --retries=3 \
     CMD curl -fsS http://localhost:7860/health || exit 1
 
-# One worker on purpose. Job state in `api/jobs.py` is per-process, so a second
-# worker would let a client poll the one that does not hold its job. Multiple
-# workers means moving that to shared storage first.
+# One worker. Ingestion now runs inside the upload request and the stores are
+# shared, so a second worker would no longer lose uploads -- but `api/jobs.py`
+# is still per-process, so a client polling `GET /jobs/{id}` could still reach
+# the worker that does not hold its job. Scale with instances, which the shared
+# stores now support, rather than with workers.
 CMD ["sh", "-c", "uvicorn api.main:app --host 0.0.0.0 --port ${PORT:-7860} --workers 1"]

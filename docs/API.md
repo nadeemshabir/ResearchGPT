@@ -33,20 +33,52 @@ Mapping it to 4xx would make correct behaviour look like a client mistake, and
 would bury it in any error-rate dashboard. Refusal is a measured feature — 23 of
 23 unanswerable questions are declined, see [EVALUATION.md](EVALUATION.md).
 
-### Upload returns before ingestion finishes
+### Upload waits for ingestion
 
-`POST /papers` responds **202** with a job id. A 92-page paper takes about nine
-seconds to ingest, which is too long to hold a request open.
+`POST /papers` responds **201** once the paper is searchable, carrying a
+finished job. A 92-page paper takes about nine seconds.
 
 ```
-POST /papers            -> 202 {"job_id": "...", "state": "queued"}
-GET  /jobs/{job_id}      -> {"state": "succeeded", "num_chunks": 160}
+POST /papers            -> 201 {"state": "succeeded", "num_chunks": 160, ...}
+GET  /jobs/{job_id}      -> the same record, for a client that lost the response
 ```
 
-Job state is **in-process and not durable**. Jobs are lost on restart, and with
-more than one worker a client can poll the worker that does not hold its job.
-That is a deliberate trade for a single-instance deployment; multiple workers
-means moving `api/jobs.py` to shared storage first.
+It used to return **202** and ingest in a background task. On Cloud Run that
+does not work: CPU is throttled to near zero once the response has been sent,
+so the task could take minutes or be killed at the next scale-down, and the
+per-process job registry meant a client polling for its job usually reached an
+instance that had never seen it.
+
+Job state is still **in-process and not durable**. `GET /jobs/{id}` can 404 on
+another instance. That no longer matters much, since the outcome comes back in
+the upload response.
+
+### Uploading an id that is already indexed is a 409
+
+The paper id is derived from the filename, so two people uploading `paper.pdf`
+would land on the same id. Overwriting silently would lose somebody's work, so
+the second upload is refused:
+
+```
+POST /papers                    -> 409 {"error": "paper_exists", ...}
+POST /papers?replace=true       -> 201, the old chunks and PDF replaced
+```
+
+`replace=true` deletes the old chunks before indexing, rather than upserting
+over them: chunk ids are `<paper_id>_chunk_<n>`, so a shorter re-index would
+otherwise leave the surplus chunks of the old version searchable and citable.
+
+Ids are cleaned before use — `Attention Is All You Need (1).pdf` becomes
+`attention_is_all_you_need`. The id is the citation key a reader sees, half of
+every chunk id, and the object name of the stored PDF. Pass `paper_id=` to
+choose your own.
+
+### Papers are stored, not just indexed
+
+The PDF is kept after it is indexed, in a GCS bucket (`UPLOAD_BUCKET`) or a
+local directory. `DELETE /papers/{id}` removes both. Deleting only the chunks
+used to leave the file behind for good: a surprise, since the UI says the paper
+is gone, and a bill that grows with every delete.
 
 ### Streaming streams stages, not tokens
 
@@ -79,8 +111,8 @@ so each request is handed to `asyncio.to_thread`.
 | `POST` | `/query/stream` | The same, as SSE |
 | `GET` | `/papers` | List indexed papers |
 | `GET` | `/papers/{id}` | One paper |
-| `POST` | `/papers` | Upload a PDF (202 + job id) |
-| `DELETE` | `/papers/{id}` | Remove a paper and its chunks |
+| `POST` | `/papers` | Upload and index a PDF (201 + finished job) |
+| `DELETE` | `/papers/{id}` | Remove a paper: its chunks and its PDF |
 | `GET` | `/jobs/{id}` | Ingestion status |
 | `GET` | `/jobs` | Recent jobs |
 | `GET` | `/health` | Liveness and dependency checks |
@@ -118,24 +150,30 @@ the measured behaviour. There is no request field to switch it on.
   "status": "ok",
   "version": "0.2.0",
   "dependencies": [
-    {"name": "vector_store", "ok": true, "detail": "597 chunks from 8 papers"},
-    {"name": "llm",          "ok": true, "detail": "gemini/gemini-2.5-flash"},
-    {"name": "api_key",      "ok": true, "detail": "provider=gemini"}
+    {"name": "vector_store",  "ok": true, "detail": "0 chunks from 0 papers (cloud: chroma-cloud/tenant/researchgpt)"},
+    {"name": "paper_storage", "ok": true, "detail": "gcs: gs://my-bucket/papers"},
+    {"name": "llm",           "ok": true, "detail": "gemini/gemini-2.5-flash"},
+    {"name": "api_key",       "ok": true, "detail": "provider=gemini"}
   ],
-  "total_papers": 8,
-  "total_chunks": 597
+  "total_papers": 0,
+  "total_chunks": 0
 }
 ```
 
 | `status` | Meaning |
 |---|---|
-| `ok` | Everything reachable, corpus populated |
-| `degraded` | Working, but **nothing indexed** |
+| `ok` | Every dependency reachable |
 | `unhealthy` | A dependency failed |
 
-An empty corpus is `degraded`, not `unhealthy`, on purpose: the service is
-working correctly and a load balancer should keep sending traffic. Only an
-operator can fix an empty index.
+**An empty corpus is `ok`.** Every paper in this service arrives by upload, so
+a store with nothing in it is a deployment nobody has uploaded to yet — the
+normal first state of every install. It used to report `degraded`, from when
+the corpus was baked into the image and an empty one meant the build had gone
+wrong. Keeping that would have meant every fresh install started life looking
+broken, which is how a status field stops being read.
+
+`total_papers` is still there, for a client that wants to show an
+empty-library prompt.
 
 The `api_key` check verifies a key exists **for the provider actually
 selected** — having an OpenAI key configured does not help when

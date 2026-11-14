@@ -1,5 +1,13 @@
 """Index PDFs from a directory into the application's vector store.
 
+Bulk loading from the command line, for evaluation runs and for seeding a
+development store. The deployed service does not use it: there, papers arrive
+through ``POST /papers`` one at a time, and the store they go into is remote.
+
+Pointed at a remote store (``CHROMA_MODE=cloud`` or ``http``) this writes to
+whatever that configuration names -- including a live deployment. Check which
+store the environment selects before running it with ``--reset``.
+
 Usage:
     python scripts/index_papers.py                       # index data/raw
     python scripts/index_papers.py --skip Panipat.pdf    # exclude a file
@@ -15,7 +23,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import re
 import sys
 from pathlib import Path
 
@@ -23,6 +30,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.exceptions import PDFParseError, ResearchGPTError  # noqa: E402
+from src.ingestion.ids import clean_paper_id  # noqa: E402
 from src.ingestion.pipeline import IngestionPipeline  # noqa: E402
 from src.utils.logging import get_logger, setup_logging  # noqa: E402
 
@@ -31,14 +39,10 @@ logger = get_logger(__name__)
 ALIAS_FILE = "paper_ids.json"
 
 
-def clean_id(stem: str) -> str:
-    """Turn a filename into a usable paper ID.
-
-    Strips duplicate markers like " (1)", collapses punctuation, and lowercases.
-    """
-    stem = re.sub(r"\s*\(\d+\)\s*$", "", stem)
-    stem = re.sub(r"[^\w\-]+", "_", stem)
-    return stem.strip("_").lower()
+#: Kept as a name here because this script's docstring and the Dockerfile
+#: both refer to it. The implementation lives in :mod:`src.ingestion.ids` so
+#: that the upload endpoint derives ids exactly the same way.
+clean_id = clean_paper_id
 
 
 def load_aliases(directory: Path) -> dict[str, str]:

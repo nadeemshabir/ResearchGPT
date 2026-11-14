@@ -4,12 +4,17 @@ import { ApiError, type IngestionJob, pollJob, uploadPaper } from "../api";
 import { Info, UploadCloud } from "./icons";
 
 /**
- * Drag-and-drop PDF upload with job polling.
+ * Drag-and-drop PDF upload.
  *
- * The API returns 202 with a job id and ingests in the background -- a 92-page
- * paper takes about nine seconds, too long to hold a request open. Ingestion
- * reports `queued -> running -> succeeded` with no intermediate stages, so this
- * shows an indeterminate state rather than a fake percentage.
+ * The request is held open until the paper is indexed -- a 92-page paper takes
+ * about nine seconds -- and comes back with a finished job. There are no
+ * intermediate stages to report, so this shows an indeterminate spinner rather
+ * than a fake percentage. It falls back to polling if the response ever
+ * arrives unfinished.
+ *
+ * A 409 means that id is already indexed. Rather than deciding for the user,
+ * this offers to replace it: overwriting somebody else's upload silently is
+ * how a shared library loses work.
  */
 
 interface Props {
@@ -21,23 +26,41 @@ interface Props {
 export function Upload({ onIngested, ephemeral }: Props) {
   const [job, setJob] = useState<IngestionJob | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [sending, setSending] = useState(false);
+  /** Set when the server reports this paper is already indexed (409). */
+  const [conflict, setConflict] = useState<{
+    file: File;
+    detail: string;
+  } | null>(null);
   const [dragging, setDragging] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
   const send = useCallback(
-    async (file: File) => {
+    async (file: File, replace = false) => {
       setError(null);
+      setConflict(null);
       setJob(null);
+      setSending(true);
       try {
-        const started = await uploadPaper(file);
-        setJob(started);
-        const finished = await pollJob(started.job_id, setJob);
-        if (finished.state === "succeeded") onIngested();
+        let result = await uploadPaper(file, { replace });
+        setJob(result);
+        // The upload already waited for ingestion. Polling is the recovery
+        // path for a response that somehow came back unfinished.
+        if (result.state === "queued" || result.state === "running") {
+          result = await pollJob(result.job_id, setJob);
+        }
+        if (result.state === "succeeded") onIngested();
       } catch (exc) {
-        setError(
-          exc instanceof ApiError ? exc.message : "Upload failed. Try again.",
-        );
+        if (exc instanceof ApiError && exc.status === 409) {
+          setConflict({ file, detail: exc.message });
+        } else {
+          setError(
+            exc instanceof ApiError ? exc.message : "Upload failed. Try again.",
+          );
+        }
         setJob(null);
+      } finally {
+        setSending(false);
       }
     },
     [onIngested],
@@ -53,7 +76,7 @@ export function Upload({ onIngested, ephemeral }: Props) {
     [send],
   );
 
-  const busy = job?.state === "queued" || job?.state === "running";
+  const busy = sending || job?.state === "queued" || job?.state === "running";
 
   return (
     <div className="upload">
@@ -89,9 +112,7 @@ export function Upload({ onIngested, ephemeral }: Props) {
         {busy ? (
           <>
             <span className="spinner" aria-hidden />
-            <span>
-              {job?.state === "queued" ? "Queued" : "Reading"} {job?.filename}…
-            </span>
+            <span>Reading {job?.filename ?? "your PDF"}…</span>
             <span className="dropzone__sub">
               Parsing, chunking and embedding. Long papers take a few seconds.
             </span>
@@ -106,6 +127,19 @@ export function Upload({ onIngested, ephemeral }: Props) {
           </>
         )}
       </div>
+
+      {conflict && (
+        <p className="upload__error">
+          {conflict.detail}{" "}
+          <button
+            type="button"
+            className="upload__replace"
+            onClick={() => void send(conflict.file, true)}
+          >
+            Replace it
+          </button>
+        </p>
+      )}
 
       {ephemeral && (
         <p className="upload__note">

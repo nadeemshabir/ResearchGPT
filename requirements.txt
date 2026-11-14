@@ -25,7 +25,15 @@ sentence-transformers>=2.3
 # a specific CUDA build.
 
 # --- Vector store ---------------------------------------------------------
-chromadb>=0.5
+# 1.x for HttpClient and CloudClient: a deployment's store has to outlive the
+# container, and an on-disk collection inside an ephemeral filesystem does not.
+chromadb>=1.0
+
+# --- Uploaded PDF storage -------------------------------------------------
+# Only used when UPLOAD_BUCKET is set. Declared rather than optional because
+# the deployment needs it and a missing dependency there is a 502 on the first
+# upload, which is a bad place to find out.
+google-cloud-storage>=2.17
 
 # --- Lexical search -------------------------------------------------------
 rank-bm25>=0.2.2

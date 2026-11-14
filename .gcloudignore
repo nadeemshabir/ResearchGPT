@@ -15,12 +15,12 @@ frontend/node_modules/
 frontend/dist/
 *.tsbuildinfo
 
-# The vector store is built during the image build from the fetched corpus.
-# Uploading a local one would ship whatever happened to be on this machine.
-data/chroma_db/
-data/eval_chroma/
-data/raw/*.pdf
-data/processed/
+# No local data goes into the image. The deployment's vector store is remote
+# and its PDFs live in a bucket; anything under data/ here is a developer's
+# own corpus, their uploads, or an evaluation store. Shipping any of it would
+# put one machine's papers in front of every user -- which is exactly the bug
+# that baking the corpus into the image created.
+data/
 
 # Secrets. The key comes from Secret Manager at runtime, never from the image.
 .env
