@@ -35,21 +35,20 @@ htmlcov/
 # Model weights
 models/
 
-# Local data. The vector store is a build artifact, rebuilt by re-ingesting,
-# so it is not versioned. These paths are scoped deliberately: the previous
-# blanket `*.bin` / `*.sqlite3` patterns were broad enough to silently hide
-# legitimate files anywhere in the tree.
-data/chroma_db/
-data/raw/*.pdf
-!data/raw/.gitkeep
+# Local data: never committed. Everything under data/ is rebuilt or
+# re-downloaded -- the vector stores by re-ingesting, the evaluation PDFs by
+# `make corpus`, uploads by uploading. The folders are created when needed.
+data/
 
-# The BEIR/SciFact index, ~75 MB, rebuilt automatically by `make eval`.
-data/eval_chroma/
+# Evaluation output. Runs are written here by `make eval*` and stay local.
+# One run is committed: eval/data/human_grades.json was graded against it, and
+# `make eval-calibrate` needs it to compare those grades with the LLM judge.
+eval/results/*
+!eval/results/generation-single-shot-20260805-161415.json
 
-# Evaluation evidence: the JSON results are committed on purpose -- they are
-# what docs/EVALUATION.md cites. The console logs are not: they are mostly
-# progress-bar output and add tens of megabytes over time.
-eval/results/*.log
+# Personal working notes, kept locally but not on GitHub.
+/plan.md
+/walkthrough.md
 
 # Saved chat transcripts
 chat_history_*.txt

@@ -21,8 +21,8 @@ from src.ingestion.pdf_parser import PDFParser
 
 RAW = PROJECT_ROOT / "data" / "raw"
 
-#: Not papers. `test_paper.pdf` is a cover letter used as an upload fixture and
-#: `Panipat.pdf` is a municipal pollution plan; neither has a paper title.
+#: Files that can sit in a local data/raw/ but are not research papers, so
+#: have no paper title to find.
 NOT_PAPERS = {"test_paper.pdf", "Panipat.pdf"}
 
 

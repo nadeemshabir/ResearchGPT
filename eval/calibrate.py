@@ -1,6 +1,6 @@
 """Grade answers by hand, then measure how far the LLM judge agrees with you.
 
-Every generation score in ``docs/EVALUATION.md`` comes from an LLM marking
+Every generation score this project measured comes from an LLM marking
 another LLM's work. Published estimates put RAGAS-to-human correlation at
 roughly 0.55, which is high enough to be useful and low enough that quoting a
 faithfulness score without an agreement figure overstates what is known.

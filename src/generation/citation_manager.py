@@ -143,9 +143,9 @@ class ParagraphAttribution:
 def _year_from_paper_id(paper_id: str) -> str:
     """Pull a publication year out of an id like ``attention_2017``.
 
-    PDF metadata rarely carries a usable year, but the ids in
-    ``data/raw/paper_ids.json`` end in one, and ``[Title, 2017]`` reads far
-    better than ``[Title, n.d.]``.
+    PDF metadata rarely carries a usable year, but ids like the ones
+    ``scripts/fetch_corpus.py`` uses end in one, and ``[Title, 2017]`` reads
+    far better than ``[Title, n.d.]``.
     """
     match = re.search(r"(?:^|[_\-])((?:19|20)\d{2})(?:$|[_\-])", paper_id)
     return match.group(1) if match else ""

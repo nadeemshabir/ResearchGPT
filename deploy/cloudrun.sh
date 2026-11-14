@@ -20,7 +20,7 @@
 #   UPLOAD_BUCKET  a GCS bucket for the uploaded PDFs        (required)
 #   a vector store reachable over the network                (required)
 #
-# One-time setup for both is in docs/DEPLOY.md. This script refuses to deploy
+# One-time setup for both is in README.md, under Deploying. This script refuses to deploy
 # without them rather than producing a service that loses every upload.
 
 set -euo pipefail
@@ -32,7 +32,7 @@ REPO="researchgpt"
 IMAGE="${REGION}-docker.pkg.dev/${PROJECT}/${REPO}/${SERVICE}"
 
 # Storage for uploaded PDFs.
-UPLOAD_BUCKET="${UPLOAD_BUCKET:?Set UPLOAD_BUCKET to the GCS bucket for uploaded PDFs. See docs/DEPLOY.md}"
+UPLOAD_BUCKET="${UPLOAD_BUCKET:?Set UPLOAD_BUCKET to the GCS bucket for uploaded PDFs. See README.md, Deploying}"
 UPLOAD_PREFIX="${UPLOAD_PREFIX:-papers}"
 
 # Vector store. cloud = Chroma Cloud; http = a Chroma server you run.
@@ -55,7 +55,7 @@ case "${CHROMA_MODE}" in
     *)
         echo "CHROMA_MODE must be 'cloud' or 'http'. 'local' is an on-disk store;" >&2
         echo "on Cloud Run it is wiped on every restart and not shared between" >&2
-        echo "instances, so every upload would be lost. See docs/DEPLOY.md." >&2
+        echo "instances, so every upload would be lost. See README.md, Deploying." >&2
         exit 1
         ;;
 esac
@@ -83,7 +83,7 @@ gcloud artifacts repositories describe "${REPO}" --location "${REGION}" --quiet 
 echo "==> Checking the upload bucket exists"
 gcloud storage buckets describe "gs://${UPLOAD_BUCKET}" --quiet >/dev/null 2>&1 || {
     echo "No bucket gs://${UPLOAD_BUCKET}. Create it and grant the service" >&2
-    echo "account access -- the commands are in docs/DEPLOY.md." >&2
+    echo "account access -- the commands are in README.md, Deploying." >&2
     exit 1
 }
 

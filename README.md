@@ -11,7 +11,7 @@
   <a href="https://researchgpt-dljnaee32a-uc.a.run.app">
     <img src="https://img.shields.io/badge/Live%20Demo-try%20it%20now-2563EB?style=for-the-badge&logo=googlecloud&logoColor=white" alt="Live Demo">
   </a>
-  <a href="docs/EVALUATION.md">
+  <a href="#-results">
     <img src="https://img.shields.io/badge/Evaluation-300%20labelled%20queries-16A34A?style=for-the-badge&logo=databricks&logoColor=white" alt="Evaluation">
   </a>
 </p>
@@ -21,7 +21,7 @@
     <img src="https://img.shields.io/github/actions/workflow/status/nadeemshabir/ResearchGPT/ci.yml?branch=main&style=flat-square&label=CI&logo=githubactions&logoColor=white" alt="CI">
   </a>
   <img src="https://img.shields.io/badge/python-3.10%2B-3776AB?style=flat-square&logo=python&logoColor=white" alt="Python 3.10+">
-  <img src="https://img.shields.io/badge/tests-307%20offline-2EA043?style=flat-square&logo=pytest&logoColor=white" alt="307 tests">
+  <img src="https://img.shields.io/badge/tests-345%20offline-2EA043?style=flat-square&logo=pytest&logoColor=white" alt="345 tests">
   <img src="https://img.shields.io/badge/nDCG%4010-0.6972-8B5CF6?style=flat-square" alt="nDCG@10 0.6972">
   <img src="https://img.shields.io/badge/fabricated%20citations-0-DC2626?style=flat-square" alt="0 fabricated citations">
   <a href="LICENSE">
@@ -31,11 +31,11 @@
 
 <p>
   <a href="https://researchgpt-dljnaee32a-uc.a.run.app"><b>Live demo</b></a> ·
-  <a href="docs/EVALUATION.md">Evaluation</a> ·
-  <a href="docs/ARCHITECTURE.md">Architecture</a> ·
-  <a href="docs/API.md">API</a> ·
-  <a href="docs/DEPLOY.md">Deploy</a> ·
-  <a href="plan.md">Roadmap</a>
+  <a href="#-quick-start">Quick start</a> ·
+  <a href="#-results">Results</a> ·
+  <a href="#-api">API</a> ·
+  <a href="#-deploying">Deploying</a> ·
+  <a href="#%EF%B8%8F-roadmap">Roadmap</a>
 </p>
 
 </div>
@@ -43,11 +43,12 @@
 ---
 
 > [!IMPORTANT]
-> **The live demo starts empty — upload a PDF, then ask about it.**
-> It used to ship with eight papers indexed into the image; it no longer ships
-> with any, and what you upload is kept.
-> It scales to zero, so the first request after an idle period waits **60–90 seconds**
-> for a cold start. The app shows a loading screen while it wakes.
+> **The app starts with an empty library — upload a PDF, then ask about it.**
+> No papers ship with it. What you upload is kept in your own vector store.
+>
+> The live demo below still runs an older build with eight papers preloaded,
+> until it is redeployed. It scales to zero, so the first request after an idle
+> period waits **60–90 seconds** for a cold start.
 >
 > 🔗 **https://researchgpt-dljnaee32a-uc.a.run.app**
 
@@ -102,16 +103,13 @@ flowchart LR
     class L out
 ```
 
-Full walkthrough in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
-
 ---
 
 ## 📊 Results
 
 Measured on [BEIR/SciFact](https://huggingface.co/datasets/BeIR/scifact) — 300
 expert-labelled queries over 5,183 scientific abstracts. No hand-written or
-LLM-generated labels. Full methodology in [docs/EVALUATION.md](docs/EVALUATION.md);
-reproduce with `make eval`.
+LLM-generated labels. Reproduce with `make eval`.
 
 | Configuration | Recall@5 | Recall@10 | MRR | nDCG@10 | p95 latency |
 |---|:--:|:--:|:--:|:--:|:--:|
@@ -228,6 +226,145 @@ worth knowing:
 
 ---
 
+## 🔌 API
+
+`make api` serves it on :8000. Interactive docs are at `/docs`.
+
+| Method | Path | What it does |
+|---|---|---|
+| `POST` | `/query` | Answer a question |
+| `POST` | `/query/stream` | The same, as server-sent events (stages, not tokens) |
+| `GET` | `/papers` | List indexed papers |
+| `GET` | `/papers/{id}` | One paper |
+| `POST` | `/papers` | Upload and index a PDF |
+| `DELETE` | `/papers/{id}` | Remove a paper: its chunks and its PDF |
+| `GET` | `/jobs/{id}` | The result of an upload |
+| `GET` | `/health` | Checks the store, PDF storage, LLM and API key |
+
+A few behaviours worth knowing:
+
+- **A refusal is `200`, not an error.** When the library cannot support a
+  question, the answer comes back with `refused: true`.
+- **Upload waits until the paper is searchable**, then returns `201` with the
+  finished job. A 92-page paper takes about nine seconds.
+- **Uploading an id that already exists is a `409`.** Add `?replace=true` to
+  overwrite it. The id comes from the filename, cleaned:
+  `Attention Is All You Need (1).pdf` becomes `attention_is_all_you_need`.
+  Pass `?paper_id=` to choose your own.
+- **An empty library is healthy.** `/health` reports `ok` with
+  `total_papers: 0` on a fresh install.
+
+---
+
+## 🚀 Deploying
+
+Target: **Google Cloud Run.** It scales to zero, so it costs nothing while
+nobody is using it.
+
+**One rule matters most.** Cloud Run wipes the container's disk on every
+restart, and does not share it between containers. So the library has to live
+outside the container, in two places:
+
+| What | Where | Setting |
+|---|---|---|
+| Chunks and embeddings | Chroma Cloud (or your own Chroma server) | `CHROMA_MODE=cloud` (or `http`) |
+| The uploaded PDFs | A Google Cloud Storage bucket | `UPLOAD_BUCKET` |
+
+`deploy/cloudrun.sh` refuses to deploy without both. Otherwise every upload
+would be lost on the next restart.
+
+### One-time setup
+
+You need the [gcloud CLI](https://cloud.google.com/sdk/docs/install) and a
+project with billing turned on (needed even for the free tier).
+
+**1. Set these once**, so the commands below can be pasted as they are:
+
+```bash
+PROJECT=your-project-id
+REGION=us-central1
+BUCKET=${PROJECT}-researchgpt-papers
+PROJECT_NUMBER=$(gcloud projects describe "$PROJECT" --format='value(projectNumber)')
+RUNTIME_SA="${PROJECT_NUMBER}-compute@developer.gserviceaccount.com"
+```
+
+**2. Store the LLM key** in Secret Manager, so it never shows in the console:
+
+```bash
+gcloud secrets create researchgpt-gemini-key --replication-policy=automatic
+printf '%s' 'YOUR_GEMINI_KEY' | gcloud secrets versions add researchgpt-gemini-key --data-file=-
+```
+
+**3. Create the vector store.** Sign up at [trychroma.com](https://www.trychroma.com/)
+and create a database. Copy the tenant id, database name and API key. Store
+the key:
+
+```bash
+gcloud secrets create researchgpt-chroma-key --replication-policy=automatic
+printf '%s' 'YOUR_CHROMA_API_KEY' | gcloud secrets versions add researchgpt-chroma-key --data-file=-
+```
+
+**4. Create the bucket** for uploaded PDFs. It is private: nothing in the app
+serves these files publicly.
+
+```bash
+gcloud storage buckets create "gs://${BUCKET}" --project="$PROJECT" \
+  --location="$REGION" --uniform-bucket-level-access --public-access-prevention
+```
+
+**5. Give the service access** to the bucket and both secrets:
+
+```bash
+gcloud storage buckets add-iam-policy-binding "gs://${BUCKET}" \
+  --member="serviceAccount:${RUNTIME_SA}" --role=roles/storage.objectAdmin
+
+for secret in researchgpt-gemini-key researchgpt-chroma-key; do
+  gcloud secrets add-iam-policy-binding "$secret" \
+    --member="serviceAccount:${RUNTIME_SA}" --role=roles/secretmanager.secretAccessor
+done
+```
+
+**6. Deploy:**
+
+```bash
+UPLOAD_BUCKET="$BUCKET" CHROMA_MODE=cloud \
+CHROMA_TENANT=your-tenant-id CHROMA_DATABASE=your-database \
+./deploy/cloudrun.sh "$PROJECT" "$REGION"
+```
+
+The build takes about 10–15 minutes on Cloud Build's free default machine.
+`BUILD_MACHINE=e2-highcpu-8` roughly halves that, but is billed.
+
+### Checking it worked
+
+```bash
+URL=$(gcloud run services describe researchgpt --region "$REGION" --format 'value(status.url)')
+curl -fsS "$URL/health" | python -m json.tool
+```
+
+Expect `"status": "ok"` and **`"total_papers": 0`**. Zero is correct on a new
+deploy. Every item in `dependencies` must say `ok`.
+
+The real test: upload a paper, wait for the app to go idle (~15 minutes), then
+open it again. If the paper is gone, the store is on local disk — check
+`CHROMA_MODE` in `gcloud run services describe researchgpt`.
+
+### Good to know
+
+- **Do not use Groq for the live demo.** Its free tier stops at 100,000 tokens a
+  day, and when it runs out it slows down instead of failing, so answers just
+  take 30 seconds.
+- **Cold starts take 60–90 seconds** after an idle period: the image pull, then
+  loading the embedding model. `--min-instances 1` removes this, but leaves the
+  free tier (roughly $10–15 a month).
+- **Every visitor shares one library.** Anyone can see and delete any uploaded
+  paper. There are no user accounts.
+- **`scripts/index_papers.py` writes to whatever store your shell points at.**
+  With cloud settings in your environment, that is the live store — and
+  `--reset` wipes it.
+
+---
+
 ## 🗂️ Project layout
 
 <details>
@@ -245,14 +382,18 @@ src/
   generation/        LLM client, prompts, agents, routing, citations
 api/                 FastAPI app, schemas, upload jobs
 frontend/            React + Vite UI, built into static/ and served by the API
-test/                307 tests, all offline
+test/                345 tests, all offline
 eval/                BEIR harness, RAGAS, refusal, judge calibration
-scripts/             corpus download, indexing, store reset
+  data/              question sets and the human grades
+  results/           run output (local; one run is kept for calibration)
+scripts/             evaluation-corpus download, bulk indexing, store reset
 deploy/              Cloud Run deployment script
+.github/workflows/   CI
 Dockerfile           multi-stage build; ships no papers
-docs/                ARCHITECTURE.md, API.md, EVALUATION.md, DEPLOY.md
-plan.md              roadmap
 ```
+
+`data/` does not exist in a fresh clone. It is created on first use and is
+never committed: vector stores, downloaded papers and uploads all live there.
 
 </details>
 
@@ -265,7 +406,7 @@ make install-dev    # runtime + dev dependencies
 make frontend-install
 make serve          # build the UI, serve API + UI on :8000
 
-make test           # 307 tests, offline, ~40s
+make test           # 345 tests, offline, ~40s
 make check          # lint + typecheck + tests
 make docker         # build the image (ships empty -- no papers)
 make deploy PROJECT=my-project   # build and ship to Cloud Run
@@ -278,7 +419,7 @@ uploads, lists and deletes one PDF against the running container. The
 no-papers check guards the regression this replaced: the corpus used to be
 indexed at build time, so every image shipped the same eight papers to
 everyone who opened it. Deployment itself is manual, see
-[docs/DEPLOY.md](docs/DEPLOY.md).
+[Deploying](#-deploying).
 
 Three conventions hold throughout `src/`:
 
@@ -315,22 +456,23 @@ around: clicking a claim to see the passage behind it.
 
 ## 🗺️ Roadmap
 
-See [plan.md](plan.md). In short:
-
 - [x] **M1 — Foundation.** Config layer, typed exceptions, structured logging,
       error handling at every boundary, repo hygiene.
 - [x] **M2a — Retrieval evaluation.** BEIR/SciFact harness, four ablations and
       two parameter sweeps over 300 expert-labelled queries. Two shipped
-      defaults changed on the evidence. See [docs/EVALUATION.md](docs/EVALUATION.md).
+      defaults changed on the evidence. See [Results](#-results).
 - [x] **M2b — Generation evaluation.** RAGAS over 43 questions, refusal on 23
       unanswerable ones, and judge calibration against hand grades. The
       calibration failed (κ = −0.195), so the judged scores are withdrawn and
       only the code-counted results are quoted. Deterministic citations shipped
       out of this milestone.
-- [x] **M3 — Productionisation.** 307 offline tests, FastAPI with SSE stage
+- [x] **M3 — Productionisation.** Offline tests, FastAPI with SSE stage
       streaming, a React frontend replacing Streamlit, Docker, CI, and a Cloud
       Run deployment. **Not done:** per-query cost and latency tracking on a
       `/metrics` endpoint.
+- [x] **User uploads.** The 8-paper corpus no longer ships in the image. The
+      library is whatever users upload, kept in a remote store and a bucket.
+      **Not done:** redeploying the live demo, and per-user libraries.
 - [ ] **M4 — Differentiation.** One deeper capability, measured against the
       M2 harness.
 

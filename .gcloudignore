@@ -50,8 +50,6 @@ models/
 # Not needed at runtime
 test/
 eval/
-docs/
-plan.md
 Makefile
 requirements-dev.txt
 .idea/
