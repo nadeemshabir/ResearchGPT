@@ -43,7 +43,9 @@
 ---
 
 > [!IMPORTANT]
-> **The live demo has eight papers already indexed** — nothing to upload, just ask.
+> **The live demo starts empty — upload a PDF, then ask about it.**
+> It used to ship with eight papers indexed into the image; it no longer ships
+> with any, and what you upload is kept.
 > It scales to zero, so the first request after an idle period waits **60–90 seconds**
 > for a cold start. The app shows a loading screen while it wakes.
 >
@@ -192,8 +194,12 @@ make serve              # build the UI, then serve API + UI on http://localhost:
 ```
 
 Ask a question in the composer. Click a citation to open the passage it came
-from. Upload more PDFs from the library drawer — ingestion runs in the
-background and the drawer reports progress.
+from. Attach a PDF from the composer — the upload waits while the paper is
+parsed, chunked and embedded, then it is immediately askable.
+
+`make corpus` and `make index` are for reproducing the evaluation, which was
+measured on those eight specific papers. Nothing requires them: an empty
+library is a working install.
 
 `make api` serves the JSON API alone (docs at `/docs`), and `make frontend-dev`
 runs Vite on :5173 against it for UI work.
@@ -208,6 +214,8 @@ worth knowing:
 
 | Setting | Default | Notes |
 |---|:--:|---|
+| `CHROMA_MODE` | `local` | `local` is a directory on disk — fine here, wrong on Cloud Run or a Space, where the filesystem is wiped on restart and not shared between instances. Use `cloud` (Chroma Cloud) or `http` (your own Chroma server) there. |
+| `UPLOAD_BUCKET` | *(unset)* | GCS bucket keeping the uploaded PDFs after indexing. Unset means `UPLOAD_DIR` on local disk — same caveat. |
 | `EMBEDDING_MODEL` | `all-MiniLM-L6-v2` | Changing this after indexing requires re-ingesting; the app detects the mismatch and tells you. |
 | `CHUNK_SIZE` / `CHUNK_OVERLAP` | `1000` / `200` | Measured in tokens, not characters. |
 | `SEMANTIC_WEIGHT` / `KEYWORD_WEIGHT` | `0.5` / `0.5` | Tuned by sweep on SciFact. The old 0.7/0.3 cost ~1 nDCG point. |
@@ -232,16 +240,16 @@ src/
   config.py          all tunable parameters
   exceptions.py      typed error hierarchy
   utils/             logging, retry, device selection
-  ingestion/         PDF parsing, chunking, embedding, vector store
+  ingestion/         PDF parsing, chunking, embedding, vector store, PDF storage
   retrieval/         dense, BM25, fusion, reranking, query processing
   generation/        LLM client, prompts, agents, routing, citations
-api/                 FastAPI app, schemas, background jobs
+api/                 FastAPI app, schemas, upload jobs
 frontend/            React + Vite UI, built into static/ and served by the API
 test/                307 tests, all offline
 eval/                BEIR harness, RAGAS, refusal, judge calibration
 scripts/             corpus download, indexing, store reset
 deploy/              Cloud Run deployment script
-Dockerfile           multi-stage build; indexes the corpus at build time
+Dockerfile           multi-stage build; ships no papers
 docs/                ARCHITECTURE.md, API.md, EVALUATION.md, DEPLOY.md
 plan.md              roadmap
 ```
@@ -259,15 +267,17 @@ make serve          # build the UI, serve API + UI on :8000
 
 make test           # 307 tests, offline, ~40s
 make check          # lint + typecheck + tests
-make docker         # build the image (fetches and indexes the corpus)
+make docker         # build the image (ships empty -- no papers)
 make deploy PROJECT=my-project   # build and ship to Cloud Run
 ```
 
 CI ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) runs three jobs:
 lint, types and tests; the frontend typecheck and build; then a Docker build
-that boots the image and asserts `/health` reports `ok` with all 8 papers
-indexed — so a broken download URL or a chunking regression fails in CI rather
-than on deploy. Deployment itself is manual, see
+that boots the image, checks it carries **no papers and no vector store**, and
+uploads, lists and deletes one PDF against the running container. The
+no-papers check guards the regression this replaced: the corpus used to be
+indexed at build time, so every image shipped the same eight papers to
+everyone who opened it. Deployment itself is manual, see
 [docs/DEPLOY.md](docs/DEPLOY.md).
 
 Three conventions hold throughout `src/`:

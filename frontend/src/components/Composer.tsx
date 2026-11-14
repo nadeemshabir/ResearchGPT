@@ -29,6 +29,11 @@ export function Composer({ onSend, onUploaded, busy, ephemeral }: Props) {
   const [value, setValue] = useState("");
   const [job, setJob] = useState<IngestionJob | null>(null);
   const [uploadError, setUploadError] = useState<string | null>(null);
+  const [sending, setSending] = useState(false);
+  /** Set when the server reports this id is already indexed (409). */
+  const [conflict, setConflict] = useState<{ file: File; detail: string } | null>(
+    null,
+  );
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
@@ -47,35 +52,52 @@ export function Composer({ onSend, onUploaded, busy, ephemeral }: Props) {
     setValue("");
   };
 
-  const upload = async (file: File) => {
+  const upload = async (file: File, replace = false) => {
     setUploadError(null);
+    setConflict(null);
     setJob(null);
+    setSending(true);
     try {
-      const started = await uploadPaper(file);
-      setJob(started);
-      const finished = await pollJob(started.job_id, setJob);
-      if (finished.state === "succeeded") onUploaded();
+      // The request returns once the paper is indexed, so this already holds
+      // the outcome. Polling stays as the recovery path for a response that
+      // comes back unfinished.
+      let result = await uploadPaper(file, { replace });
+      setJob(result);
+      if (result.state === "queued" || result.state === "running") {
+        result = await pollJob(result.job_id, setJob);
+      }
+      if (result.state === "succeeded") onUploaded();
       // Leave the result visible briefly, then clear so the bar does not
       // become permanent furniture.
       setTimeout(() => setJob(null), 6000);
     } catch (exc) {
-      setUploadError(
-        exc instanceof ApiError ? exc.message : "Upload failed. Try again.",
-      );
+      // 409: that id is already indexed. Offer to replace rather than
+      // overwriting silently -- in a shared library the paper under that id
+      // may be somebody else's.
+      if (exc instanceof ApiError && exc.status === 409) {
+        setConflict({ file, detail: exc.message });
+      } else {
+        setUploadError(
+          exc instanceof ApiError ? exc.message : "Upload failed. Try again.",
+        );
+      }
       setJob(null);
+    } finally {
+      setSending(false);
     }
   };
 
-  const uploading = job?.state === "queued" || job?.state === "running";
+  const uploading =
+    sending || job?.state === "queued" || job?.state === "running";
 
   return (
     <div className="composer">
-      {(job || uploadError) && (
+      {(job || uploadError || conflict) && (
         <div className="composer__upload">
           {uploading && (
             <>
               <span className="spinner" aria-hidden />
-              Reading {job?.filename}…
+              Reading {job?.filename ?? "your PDF"}…
             </>
           )}
           {job?.state === "succeeded" && (
@@ -91,6 +113,18 @@ export function Composer({ onSend, onUploaded, busy, ephemeral }: Props) {
           )}
           {uploadError && (
             <span className="composer__upload--error">{uploadError}</span>
+          )}
+          {conflict && (
+            <span className="composer__upload--error">
+              {conflict.detail}{" "}
+              <button
+                type="button"
+                className="composer__replace"
+                onClick={() => void upload(conflict.file, true)}
+              >
+                Replace it
+              </button>
+            </span>
           )}
         </div>
       )}
@@ -115,7 +149,7 @@ export function Composer({ onSend, onUploaded, busy, ephemeral }: Props) {
           title={
             ephemeral
               ? "Attach a PDF (kept for this session only)"
-              : "Attach a PDF"
+              : "Attach a PDF to your library"
           }
           aria-label="Attach a PDF"
         >

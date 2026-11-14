@@ -8,6 +8,7 @@ obviously correct.
 
 ```
 PDF ──▶ parse ──▶ chunk ──▶ clean ──▶ embed ──▶ ChromaDB
+ └──────────────────────────────────────────────▶ PDF storage (bucket or disk)
                                                     │
 query ──▶ process ──▶ ┌── dense (cosine) ───────────┤
                       └── BM25 (lexical) ───────────┤
@@ -43,7 +44,7 @@ API — see "Routing is rule-based" below.
 | `src/generation/` | LLM client, prompts, multi-agent pipeline, routing, citations. |
 | `api/` | FastAPI app. Serves the JSON API and the built React bundle from one process. |
 | `frontend/` | React + Vite UI, built into `static/`. The only code that formats output for humans. |
-| `scripts/` | Operational CLIs (corpus download, indexing, store reset). |
+| `scripts/` | Operational CLIs (evaluation-corpus download, bulk indexing, store reset). Not used by the deployed service, which ingests through `POST /papers`. |
 | `eval/` | BEIR harness, RAGAS, refusal, judge calibration. Entry points, so allowed to print. |
 | `test/` | 307 tests. No test calls a real provider. |
 | `deploy/` | Cloud Run deployment script. |
@@ -246,6 +247,36 @@ The collection stores which model built it. Changing `EMBEDDING_MODEL` after
 indexing otherwise surfaces as an opaque dimensionality error from ChromaDB at
 query time. `verify_embedding_model` fails at startup instead, naming the fix.
 A same-dimension model swap warns rather than fails, since it is recoverable.
+
+### State lives outside the container
+
+Three things have to survive a restart, and each is configured separately:
+
+| State | Where | Setting |
+|---|---|---|
+| Chunks and embeddings | ChromaDB: a directory, a server, or Chroma Cloud | `CHROMA_MODE` |
+| The uploaded PDFs | A GCS bucket, or a local directory | `UPLOAD_BUCKET` |
+| Ingestion job records | Memory, per process | — |
+
+The first two have local-disk fallbacks, and those fallbacks are what make the
+difference between a development machine and a deployment. On Cloud Run or a
+Hugging Face Space the filesystem is wiped on every restart and is not shared
+between instances, so a local store means uploads vanish and two instances
+disagree about what is indexed. `deploy/cloudrun.sh` refuses to deploy with
+either fallback.
+
+The PDFs are kept as well as the chunks because the chunks cannot be turned
+back into a document: re-embedding after a model change, re-chunking with
+different settings, and showing a reader the source all need the original file.
+`DELETE /papers/{id}` removes both, which it did not use to — deleting the
+chunks alone left the PDF in storage for good.
+
+Job records are deliberately not persisted. They were the reason ingestion
+could not be trusted on Cloud Run: ingestion ran in a background task whose CPU
+was throttled after the response, and a client polling for its job usually
+reached an instance that had never seen it. Ingestion now runs inside the
+upload request, so the job record is a convenience rather than the only way to
+learn the outcome, and keeping it in memory costs nothing.
 
 ### The BM25 index refreshes itself
 

@@ -143,10 +143,38 @@ export function getHealth(): Promise<Health> {
   return request<Health>("/health");
 }
 
-export function uploadPaper(file: File): Promise<IngestionJob> {
+/**
+ * Upload and index a PDF.
+ *
+ * The request returns once the paper is searchable, carrying a finished job.
+ * Ingestion used to run in a background task, which on Cloud Run meant it ran
+ * with the CPU throttled after the response and could be killed outright.
+ *
+ * A 409 means a paper with that id is already indexed; retry with
+ * `replace: true` to overwrite it.
+ */
+export function uploadPaper(
+  file: File,
+  options: { replace?: boolean; paperId?: string } = {},
+): Promise<IngestionJob> {
   const form = new FormData();
   form.append("file", file);
-  return request<IngestionJob>("/papers", { method: "POST", body: form });
+  const query = new URLSearchParams();
+  if (options.replace) query.set("replace", "true");
+  if (options.paperId) query.set("paper_id", options.paperId);
+  const suffix = query.toString() ? `?${query}` : "";
+  return request<IngestionJob>(`/papers${suffix}`, {
+    method: "POST",
+    body: form,
+  });
+}
+
+export function deletePaper(
+  paperId: string,
+): Promise<{ paper_id: string; chunks_deleted: number }> {
+  return request(`/papers/${encodeURIComponent(paperId)}`, {
+    method: "DELETE",
+  });
 }
 
 export function getJob(jobId: string): Promise<IngestionJob> {
@@ -156,9 +184,10 @@ export function getJob(jobId: string): Promise<IngestionJob> {
 /**
  * Poll a job until it finishes.
  *
- * Ingestion reports `queued -> running -> succeeded` with no intermediate
- * stages, so there is no percentage to show and polling is enough. A 700ms
- * interval keeps a 9-second ingest feeling responsive without hammering.
+ * Rarely needed now that `uploadPaper` returns a finished job: this is the
+ * recovery path for a client that lost the upload response. Note that the job
+ * registry is per-instance, so a poll can land on an instance that never saw
+ * the job and get a 404.
  */
 export async function pollJob(
   jobId: string,

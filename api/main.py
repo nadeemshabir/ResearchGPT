@@ -6,7 +6,7 @@ Endpoints
 ---------
 ``POST /query``          answer a question over the indexed corpus
 ``POST /query/stream``   the same, as server-sent events
-``POST /papers``         upload a PDF; returns a job id
+``POST /papers``         upload and index a PDF
 ``GET  /papers``         list indexed papers
 ``GET  /papers/{id}``    one paper
 ``DELETE /papers/{id}``  remove a paper and its chunks
@@ -31,7 +31,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
-from fastapi import BackgroundTasks, FastAPI, HTTPException, Request, UploadFile
+from fastapi import FastAPI, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -40,6 +40,7 @@ from api.dependencies import (
     get_generator,
     get_jobs,
     get_pipeline,
+    get_storage,
     warm_up,
 )
 from api.schemas import (
@@ -58,9 +59,12 @@ from src.exceptions import (
     IngestionError,
     LLMError,
     NoRelevantContextError,
+    PaperAlreadyExistsError,
+    PaperStorageError,
     PDFParseError,
     ResearchGPTError,
 )
+from src.ingestion.ids import clean_paper_id
 from src.utils.logging import get_logger, setup_logging
 
 logger = get_logger(__name__)
@@ -96,7 +100,11 @@ async def handle_known_errors(_request: Request, exc: ResearchGPTError) -> JSONR
     Without this every failure is a 500 and clients cannot tell "your PDF is
     encrypted" from "the vector store is down".
     """
-    if isinstance(exc, PDFParseError):
+    if isinstance(exc, PaperAlreadyExistsError):
+        status, kind = 409, "paper_exists"
+    elif isinstance(exc, PaperStorageError):
+        status, kind = 502, "storage_unavailable"
+    elif isinstance(exc, PDFParseError):
         status, kind = 422, "invalid_pdf"
     elif isinstance(exc, IngestionError):
         status, kind = 422, "ingestion_failed"
@@ -234,13 +242,60 @@ async def get_paper(paper_id: str) -> Paper:
     raise HTTPException(status_code=404, detail=f"No indexed paper with id {paper_id!r}")
 
 
-def _ingest(job_id: str, path: Path, paper_id: str) -> None:
-    """Run ingestion and record the outcome. Never raises: it has no caller."""
+def _paper_is_indexed(paper_id: str) -> bool:
+    """Whether the vector store already holds chunks for this id."""
+    return bool(get_database().get_by_paper_id(paper_id).get("ids"))
+
+
+def _purge(paper_id: str) -> int:
+    """Remove a paper's chunks and its stored PDF. Returns chunks deleted.
+
+    Both halves run even when the first finds nothing: a half-finished upload
+    can leave a PDF with no chunks, or chunks with no PDF, and a delete that
+    cleaned only the half it happened to find would leave the other behind
+    forever.
+    """
+    deleted = get_database().delete_paper(paper_id)
+    get_storage().delete(paper_id)
+    return deleted
+
+
+def _safe_purge(paper_id: str) -> None:
+    """Best-effort cleanup after a failed ingest."""
+    try:
+        _purge(paper_id)
+    except Exception:  # noqa: BLE001 - the original failure is the one to report
+        logger.debug("Cleanup after failed ingest of %r did not finish", paper_id, exc_info=True)
+
+
+def _ingest(job_id: str, path: Path, paper_id: str, replace: bool) -> None:
+    """Index one PDF and record the outcome on ``job_id``.
+
+    Runs inside the request, not in a background task. On Cloud Run a
+    background task keeps running only while the instance has CPU, and CPU is
+    throttled to near zero once the response has been sent -- so a nine-second
+    ingest started in ``BackgroundTasks`` could take minutes or be killed at
+    the next scale-down. It also made the per-process job registry a lie: with
+    more than one instance the client polling for its job hits whichever
+    instance the load balancer picks, which is usually not the one holding it.
+
+    Never raises: the job record carries the outcome.
+    """
     jobs = get_jobs()
     jobs.update(job_id, state=JobState.RUNNING)
     started = time.perf_counter()
     try:
+        if replace:
+            # Chunk ids are ``<paper_id>_chunk_<n>`` and the store upserts by
+            # id. Re-indexing a paper that now yields fewer chunks -- a
+            # different chunk size, a shorter revision -- would leave the
+            # surplus chunks of the old version in place, still searchable and
+            # still citable. Deleting first is what makes a replace a replace.
+            _purge(paper_id)
+
         stats = get_pipeline().process_paper(path, paper_id=paper_id)
+        stored_uri = get_storage().save(paper_id, path)
+
         jobs.update(
             job_id,
             state=JobState.SUCCEEDED,
@@ -248,33 +303,52 @@ def _ingest(job_id: str, path: Path, paper_id: str) -> None:
             num_sections=stats.get("num_sections"),
             num_pages=stats.get("num_pages"),
             seconds=round(time.perf_counter() - started, 2),
+            stored_at=stored_uri,
         )
         logger.info("Ingested %r via API (%s chunks)", paper_id, stats.get("num_chunks"))
     except (PDFParseError, ResearchGPTError) as exc:
+        # A paper that failed to index must not leave chunks behind: a partial
+        # index answers questions from half a document without saying so.
+        _safe_purge(paper_id)
         jobs.update(job_id, state=JobState.FAILED, detail=f"{type(exc).__name__}: {exc}")
         logger.warning("Ingestion failed for %r: %s", paper_id, exc)
-    except Exception as exc:  # noqa: BLE001 - a background task must not vanish silently
+    except Exception as exc:  # noqa: BLE001 - the job record is the only report
+        _safe_purge(paper_id)
         jobs.update(job_id, state=JobState.FAILED, detail=f"Unexpected error: {exc}")
         logger.exception("Unexpected ingestion failure for %r", paper_id)
-    finally:
-        path.unlink(missing_ok=True)
 
 
-@app.post("/papers", response_model=IngestionJob, status_code=202, tags=["papers"])
+@app.post("/papers", response_model=IngestionJob, status_code=201, tags=["papers"])
 async def upload_paper(
-    background: BackgroundTasks,
     file: UploadFile,
     paper_id: str | None = None,
+    replace: bool = False,
 ) -> IngestionJob:
-    """Upload a PDF for ingestion.
+    """Upload a PDF and index it.
 
-    Returns 202 with a job id immediately; poll ``GET /jobs/{id}``. A 92-page
-    paper takes about nine seconds to ingest, which is too long to hold a
-    request open and long enough that a client needs progress.
+    The response comes back once the paper is searchable, carrying a finished
+    job record. ``GET /jobs/{id}`` still works, and is still worth polling from
+    a client that lost the response, but on a healthy request there is nothing
+    left to wait for.
+
+    Args:
+        file: The PDF. Rejected above ``MAX_PDF_SIZE_MB``.
+        paper_id: Override the id derived from the filename. The id becomes the
+            citation key, so a readable one gives a readable citation.
+        replace: Overwrite a paper already indexed under this id. Without it a
+            collision is a 409, rather than a silent overwrite of somebody
+            else's upload.
     """
     filename = file.filename or "upload.pdf"
     if Path(filename).suffix.lower() not in _ALLOWED_SUFFIXES:
         raise HTTPException(status_code=415, detail="Only PDF uploads are supported.")
+
+    resolved_id = clean_paper_id(paper_id or Path(filename).stem)
+
+    # Checked before the body is read, so a client re-sending a 50 MB file it
+    # has already uploaded is told so immediately.
+    if not replace and await asyncio.to_thread(_paper_is_indexed, resolved_id):
+        raise PaperAlreadyExistsError(resolved_id)
 
     max_bytes = int(get_settings().max_pdf_size_mb * 1024 * 1024)
     # Written to a temp file rather than held in memory: a 50 MB upload per
@@ -297,17 +371,26 @@ async def upload_paper(
         temp_path.unlink(missing_ok=True)
         raise HTTPException(status_code=422, detail="Uploaded file is empty.")
 
-    resolved_id = paper_id or Path(filename).stem
     job = get_jobs().create(filename=filename, paper_id=resolved_id)
-    background.add_task(_ingest, job.job_id, temp_path, resolved_id)
-    return job
+    try:
+        await asyncio.to_thread(_ingest, job.job_id, temp_path, resolved_id, replace)
+    finally:
+        temp_path.unlink(missing_ok=True)
+
+    return get_jobs().get(job.job_id) or job
 
 
 @app.delete("/papers/{paper_id}", response_model=DeleteResponse, tags=["papers"])
 async def delete_paper(paper_id: str) -> DeleteResponse:
-    """Remove a paper and every chunk belonging to it."""
-    deleted = await asyncio.to_thread(get_database().delete_paper, paper_id)
-    if deleted == 0:
+    """Remove a paper: its chunks and the PDF they were built from.
+
+    Deleting only the chunks used to leave the uploaded PDF in storage for
+    good, which is both a surprise -- the UI says the paper is gone -- and a
+    bill that grows with every delete.
+    """
+    had_pdf = await asyncio.to_thread(get_storage().exists, paper_id)
+    deleted = await asyncio.to_thread(_purge, paper_id)
+    if deleted == 0 and not had_pdf:
         raise HTTPException(status_code=404, detail=f"No indexed paper with id {paper_id!r}")
     return DeleteResponse(paper_id=paper_id, chunks_deleted=deleted)
 
@@ -339,18 +422,34 @@ def _check_dependencies() -> tuple[list[DependencyStatus], int, int]:
     total_papers = total_chunks = 0
 
     try:
-        stats = get_database().get_stats()
+        database = get_database()
+        stats = database.get_stats()
         total_papers = stats["total_papers"]
         total_chunks = stats["total_chunks"]
         checks.append(
             DependencyStatus(
                 name="vector_store",
                 ok=True,
-                detail=f"{total_chunks} chunks from {total_papers} papers",
+                detail=(
+                    f"{total_chunks} chunks from {total_papers} papers "
+                    f"({stats['mode']}: {stats['location']})"
+                ),
             )
         )
     except Exception as exc:  # noqa: BLE001 - health must report, not raise
         checks.append(DependencyStatus(name="vector_store", ok=False, detail=str(exc)))
+
+    try:
+        storage = get_storage()
+        checks.append(
+            DependencyStatus(
+                name="paper_storage",
+                ok=True,
+                detail=f"{storage.backend}: {storage.location}",
+            )
+        )
+    except Exception as exc:  # noqa: BLE001
+        checks.append(DependencyStatus(name="paper_storage", ok=False, detail=str(exc)))
 
     try:
         info = get_generator().llm_client.get_model_info()
@@ -384,18 +483,14 @@ def _check_dependencies() -> tuple[list[DependencyStatus], int, int]:
 async def health() -> HealthResponse:
     """Liveness plus a probe of each dependency.
 
-    An empty corpus reports ``degraded``, not ``unhealthy``: the service is
-    working, it just has nothing to search. A load balancer should keep sending
-    traffic; an operator should notice.
+    An empty corpus is ``ok``. Every paper in this service arrives by upload,
+    so an empty store is a new deployment, not a fault -- and reporting it as
+    ``degraded`` would mean every fresh install started life looking broken.
+    What matters is whether the store and the model are reachable, which is
+    what the dependency checks say.
     """
     checks, total_papers, total_chunks = await asyncio.to_thread(_check_dependencies)
-
-    if not all(check.ok for check in checks):
-        status = "unhealthy"
-    elif total_chunks == 0:
-        status = "degraded"
-    else:
-        status = "ok"
+    status = "ok" if all(check.ok for check in checks) else "unhealthy"
 
     return HealthResponse(
         status=status,

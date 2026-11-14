@@ -92,18 +92,18 @@ jobs:
   docker:
     name: Docker image
     runs-on: ubuntu-latest
-    # Only after the cheap checks pass. This job downloads torch, an embedding
-    # model, and 28MB of papers; running it against code that fails lint is
-    # several wasted minutes.
+    # Only after the cheap checks pass. This job downloads torch and an
+    # embedding model; running it against code that fails lint is several
+    # wasted minutes.
     needs: [python, frontend]
     steps:
       - uses: actions/checkout@v4
 
       - uses: docker/setup-buildx-action@v3
 
-      # Not pushed anywhere. The point is that the image *builds* -- which
-      # includes fetching all eight papers and indexing them, so a broken
-      # download URL or a chunking regression fails here rather than on deploy.
+      # Not pushed anywhere. The point is that the image *builds* and boots.
+      # It no longer fetches or indexes any papers: the deployed service
+      # starts empty and answers from what its users upload.
       - name: Build
         uses: docker/build-push-action@v6
         with:
@@ -114,14 +114,38 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+      # The image must not carry a corpus. This is the regression that put
+      # eight papers in front of every user of the live service: they were
+      # fetched and indexed at build time and baked into the image, so every
+      # deployment shipped them whether or not anyone wanted them.
+      - name: The image ships no papers and no vector store
+        run: |
+          set -eu
+          cid=$(docker create researchgpt:ci)
+          trap 'docker rm -f "$cid" >/dev/null 2>&1 || true' EXIT
+
+          # Anything under /app/data at build time is baked-in content.
+          baked=$(docker export "$cid" | tar -t | grep '^app/data/.' || true)
+          if [ -n "$baked" ]; then
+            echo "The image carries data under /app/data:" >&2
+            echo "$baked" >&2
+            exit 1
+          fi
+
+          # And the build must not index anything, however it is spelled.
+          if grep -Eq 'RUN.*(fetch_corpus|index_papers)' Dockerfile; then
+            echo "The Dockerfile indexes a corpus at build time." >&2
+            exit 1
+          fi
+
       - name: Boot the container and check health
         run: |
           docker run -d --name rg -p 7860:7860 \
             -e LLM_PROVIDER=gemini -e GEMINI_API_KEY=not-a-real-key \
             researchgpt:ci
 
-          # Startup loads the embedding model and builds a BM25 index over
-          # every chunk; on a cold runner that is comfortably over a minute.
+          # Startup loads the embedding model and opens the store; on a cold
+          # runner that is comfortably over a minute.
           for i in $(seq 1 40); do
             if curl -fsS http://localhost:7860/health > /tmp/health.json; then
               break
@@ -132,14 +156,58 @@ jobs:
           cat /tmp/health.json
           docker logs rg | tail -30
 
-          # `degraded` would mean the corpus is empty, which means the build
-          # produced an image that cannot answer anything.
+          # An empty corpus is healthy now -- every paper arrives by upload.
+          # What must hold is that the container boots with its dependencies
+          # reachable, and that it starts with nothing indexed.
           test "$(jq -r .status /tmp/health.json)" = "ok"
-          test "$(jq -r .total_papers /tmp/health.json)" -eq 8
+          test "$(jq -r .total_papers /tmp/health.json)" -eq 0
 
       - name: Check the UI is served
         run: |
           curl -fsS http://localhost:7860/ | grep -q 'id="root"'
+
+      # End to end on the path that matters now: upload a PDF, get it indexed,
+      # then delete it. The container runs on local disk here, which is the
+      # development configuration -- that it works at all is the check.
+      # End to end on the path that matters now: upload a PDF, get it
+      # indexed, then delete it. The container runs on local disk here, which
+      # is the development configuration -- that the whole path works at all
+      # is the check.
+      - name: Upload, list, and delete a paper
+        run: |
+          set -eu
+
+          # The fixture is built by the container, which already has PyMuPDF.
+          # Committing a binary PDF would put a file nobody reviews in the
+          # repository, and this job installs no Python of its own.
+          docker exec rg python -c "
+          import fitz
+          doc = fitz.open()
+          page = doc.new_page()
+          for n in range(14):
+              page.insert_text(
+                  (72, 100 + 16 * n),
+                  'Retrieval augmented generation test paper, line %02d.' % n,
+              )
+          doc.save('/tmp/ci_paper.pdf')
+          "
+          docker cp rg:/tmp/ci_paper.pdf ci_paper.pdf
+
+          curl -fsS -F file=@ci_paper.pdf http://localhost:7860/papers > /tmp/upload.json
+          cat /tmp/upload.json
+          test "$(jq -r .state /tmp/upload.json)" = "succeeded"
+          test "$(jq -r .paper_id /tmp/upload.json)" = "ci_paper"
+
+          # A second upload under the same id is a conflict, not a silent
+          # overwrite of somebody else's paper.
+          code=$(curl -s -o /dev/null -w '%{http_code}' \
+            -F file=@ci_paper.pdf http://localhost:7860/papers)
+          test "$code" = "409"
+
+          test "$(curl -fsS http://localhost:7860/papers | jq -r .total_papers)" -eq 1
+
+          curl -fsS -X DELETE http://localhost:7860/papers/ci_paper > /dev/null
+          test "$(curl -fsS http://localhost:7860/papers | jq -r .total_papers)" -eq 0
 
       - name: Stop
         if: always()

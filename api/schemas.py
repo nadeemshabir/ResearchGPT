@@ -148,10 +148,11 @@ class PaperList(BaseModel):
 
 
 class IngestionJob(BaseModel):
-    """Status of an upload.
+    """Outcome of an upload.
 
-    Ingestion takes seconds to minutes for a long paper, so the upload endpoint
-    returns immediately with a job id and the work continues in the background.
+    Ingestion runs inside the upload request, so the job returned by
+    ``POST /papers`` has already finished. The record is kept and served from
+    ``GET /jobs/{id}`` as well, for a client that lost the response.
     """
 
     job_id: str
@@ -163,6 +164,10 @@ class IngestionJob(BaseModel):
     num_sections: int | None = None
     num_pages: int | None = None
     seconds: float | None = None
+    stored_at: str | None = Field(
+        default=None,
+        description="Where the uploaded PDF was kept: a gs:// URI or a local path.",
+    )
 
 
 class DeleteResponse(BaseModel):
@@ -182,8 +187,11 @@ class DependencyStatus(BaseModel):
 class HealthResponse(BaseModel):
     """Liveness plus a check of each dependency.
 
-    ``status`` is ``degraded`` rather than ``unhealthy`` when the corpus is
-    empty: the service is working correctly, it just has nothing to search.
+    An empty corpus is ``ok``, not ``degraded``. Papers are uploaded by users,
+    so a service with nothing indexed is a service nobody has uploaded to yet
+    -- the normal state of a fresh deployment, and not something to page an
+    operator about. ``total_papers`` is there for a client that wants to show
+    an empty-library prompt.
     """
 
     status: str

@@ -63,10 +63,18 @@ class StubDatabase:
                 return int(paper["num_chunks"])
         return 0
 
+    def get_by_paper_id(self, paper_id: str) -> dict[str, Any]:
+        for paper in self.papers:
+            if paper["paper_id"] == paper_id:
+                return {"ids": [f"{paper_id}_chunk_{n}" for n in range(paper["num_chunks"])]}
+        return {"ids": []}
+
     def get_stats(self) -> dict[str, Any]:
         return {
             "total_papers": len(self.papers),
             "total_chunks": sum(p["num_chunks"] for p in self.papers),
+            "mode": "local",
+            "location": "/tmp/stub",
         }
 
 
@@ -155,11 +163,38 @@ class StubPipeline:
         return {"num_chunks": 12, "num_sections": 4, "num_pages": 9}
 
 
+class StubStorage:
+    """Stands in for the GCS bucket or the local upload directory."""
+
+    backend = "local"
+    location = "/tmp/stub-uploads"
+
+    def __init__(self) -> None:
+        self.saved: dict[str, str] = {}
+        self.deleted: list[str] = []
+        self.raises: Exception | None = None
+
+    def save(self, paper_id: str, source: Any) -> str:
+        if self.raises is not None:
+            raise self.raises
+        uri = f"{self.location}/{paper_id}.pdf"
+        self.saved[paper_id] = uri
+        return uri
+
+    def exists(self, paper_id: str) -> bool:
+        return paper_id in self.saved
+
+    def delete(self, paper_id: str) -> bool:
+        self.deleted.append(paper_id)
+        return self.saved.pop(paper_id, None) is not None
+
+
 @pytest.fixture
 def stubs(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     """Replace every singleton, and stop the lifespan loading models."""
     database = StubDatabase()
     pipeline = StubPipeline()
+    storage = StubStorage()
     jobs = JobRegistry()
     generators: dict[bool | None, StubGenerator] = {}
 
@@ -170,6 +205,7 @@ def stubs(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     for module in ("api.main", "api.dependencies"):
         monkeypatch.setattr(f"{module}.get_database", lambda: database, raising=False)
         monkeypatch.setattr(f"{module}.get_pipeline", lambda: pipeline, raising=False)
+        monkeypatch.setattr(f"{module}.get_storage", lambda: storage, raising=False)
         monkeypatch.setattr(f"{module}.get_jobs", lambda: jobs, raising=False)
         monkeypatch.setattr(f"{module}.get_generator", fake_generator, raising=False)
     monkeypatch.setattr("api.main.warm_up", lambda: None, raising=False)
@@ -183,6 +219,7 @@ def stubs(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     return {
         "database": database,
         "pipeline": pipeline,
+        "storage": storage,
         "jobs": jobs,
         "generators": generators,
     }
@@ -336,6 +373,27 @@ def test_delete_removes_the_paper(client: Any, stubs: dict[str, Any]) -> None:
     assert stubs["database"].deleted == ["bert_2019"]
 
 
+def test_delete_also_removes_the_stored_pdf(client: Any, stubs: dict[str, Any]) -> None:
+    """Chunks and PDF are two stores. Deleting one used to orphan the other."""
+    client.delete("/papers/bert_2019")
+
+    assert stubs["storage"].deleted == ["bert_2019"]
+
+
+def test_delete_cleans_up_a_pdf_with_no_chunks(client: Any, stubs: dict[str, Any]) -> None:
+    """An upload that failed after storing leaves a PDF and no chunks.
+
+    A 404 there would make the orphan permanently undeletable through the API.
+    """
+    stubs["storage"].saved["orphan"] = "/tmp/stub-uploads/orphan.pdf"
+
+    response = client.delete("/papers/orphan")
+
+    assert response.status_code == 200
+    assert response.json()["chunks_deleted"] == 0
+    assert stubs["storage"].deleted == ["orphan"]
+
+
 def test_delete_a_missing_paper_is_404(client: Any) -> None:
     assert client.delete("/papers/nope").status_code == 404
 
@@ -343,22 +401,38 @@ def test_delete_a_missing_paper_is_404(client: Any) -> None:
 # --- upload -----------------------------------------------------------------
 
 
-def test_upload_accepts_a_pdf_and_returns_a_job(client: Any) -> None:
-    """202, not 200: ingestion has been accepted, not completed."""
+def test_upload_indexes_the_paper_before_responding(client: Any) -> None:
+    """201, not 202: the paper is searchable by the time the client is told.
+
+    Ingestion used to run in a background task. On Cloud Run that task ran with
+    the CPU throttled after the response and could be killed at a scale-down,
+    so "accepted" was a promise the platform did not keep.
+    """
     response = client.post(
         "/papers", files={"file": ("paper.pdf", b"%PDF-1.4 fake", "application/pdf")}
     )
 
-    assert response.status_code == 202
-    assert response.json()["job_id"]
-    assert response.json()["paper_id"] == "paper"
+    assert response.status_code == 201
+    body = response.json()
+    assert body["state"] == "succeeded"
+    assert body["paper_id"] == "paper"
+    assert body["job_id"]
 
 
-def test_upload_runs_ingestion_in_the_background(client: Any, stubs: dict[str, Any]) -> None:
-    """TestClient runs background tasks before returning, so this is observable."""
+def test_upload_runs_the_ingestion_pipeline(client: Any, stubs: dict[str, Any]) -> None:
     client.post("/papers", files={"file": ("paper.pdf", b"%PDF-1.4 fake", "application/pdf")})
 
     assert stubs["pipeline"].processed == ["paper"]
+
+
+def test_upload_keeps_the_pdf(client: Any, stubs: dict[str, Any]) -> None:
+    """The chunks cannot be re-embedded later without the original file."""
+    body = client.post(
+        "/papers", files={"file": ("paper.pdf", b"%PDF-1.4 fake", "application/pdf")}
+    ).json()
+
+    assert "paper" in stubs["storage"].saved
+    assert body["stored_at"] == stubs["storage"].saved["paper"]
 
 
 def test_a_successful_job_records_its_statistics(client: Any, stubs: dict[str, Any]) -> None:
@@ -373,26 +447,79 @@ def test_a_successful_job_records_its_statistics(client: Any, stubs: dict[str, A
 
 
 def test_a_failed_ingestion_is_recorded_not_raised(client: Any, stubs: dict[str, Any]) -> None:
-    """A background task has no caller, so a swallowed error would be invisible."""
+    """The job record is the only report, so a swallowed error is invisible."""
     from src.exceptions import EncryptedPDFError
 
     stubs["pipeline"].raises = EncryptedPDFError("paper.pdf is password protected.")
 
-    job_id = client.post(
+    body = client.post(
         "/papers", files={"file": ("paper.pdf", b"%PDF-1.4 fake", "application/pdf")}
-    ).json()["job_id"]
-    body = client.get(f"/jobs/{job_id}").json()
+    ).json()
 
     assert body["state"] == "failed"
     assert "password protected" in body["detail"]
+    assert client.get(f"/jobs/{body['job_id']}").json()["state"] == "failed"
+
+
+def test_a_failed_ingestion_leaves_nothing_behind(client: Any, stubs: dict[str, Any]) -> None:
+    """A half-indexed paper answers from half a document without saying so."""
+    from src.exceptions import ChunkingError
+
+    stubs["pipeline"].raises = ChunkingError("no usable chunks")
+
+    client.post("/papers", files={"file": ("paper.pdf", b"%PDF-1.4 fake", "application/pdf")})
+
+    assert stubs["storage"].deleted == ["paper"]
 
 
 def test_a_custom_paper_id_is_honoured(client: Any, stubs: dict[str, Any]) -> None:
     client.post(
-        "/papers?paper_id=attention_2017",
+        "/papers?paper_id=rag_survey_2023",
         files={"file": ("2312.10997v5.pdf", b"%PDF-1.4 fake", "application/pdf")},
     )
 
+    assert stubs["pipeline"].processed == ["rag_survey_2023"]
+
+
+def test_the_paper_id_is_cleaned(client: Any, stubs: dict[str, Any]) -> None:
+    """The id is a citation key, a chunk-id prefix and an object name.
+
+    A raw filename is none of those safely: " (1)" markers, spaces and
+    punctuation all end up in front of a reader or inside a storage path.
+    """
+    client.post(
+        "/papers",
+        files={"file": ("Attention Is All You Need (1).pdf", b"%PDF-1.4 x", "application/pdf")},
+    )
+
+    assert stubs["pipeline"].processed == ["attention_is_all_you_need"]
+
+
+def test_uploading_an_indexed_id_again_is_a_409(client: Any, stubs: dict[str, Any]) -> None:
+    """Two people uploading paper.pdf must not overwrite each other in silence."""
+    response = client.post(
+        "/papers",
+        files={"file": ("attention_2017.pdf", b"%PDF-1.4 fake", "application/pdf")},
+    )
+
+    assert response.status_code == 409
+    assert response.json()["error"] == "paper_exists"
+    assert stubs["pipeline"].processed == []
+
+
+def test_replace_overwrites_an_indexed_paper(client: Any, stubs: dict[str, Any]) -> None:
+    """The old chunks go first.
+
+    The store upserts by chunk id, so a shorter re-index would otherwise leave
+    the surplus chunks of the old version searchable and citable.
+    """
+    response = client.post(
+        "/papers?replace=true",
+        files={"file": ("attention_2017.pdf", b"%PDF-1.4 fake", "application/pdf")},
+    )
+
+    assert response.status_code == 201
+    assert stubs["database"].deleted == ["attention_2017"]
     assert stubs["pipeline"].processed == ["attention_2017"]
 
 
@@ -419,6 +546,20 @@ def test_an_oversized_upload_is_rejected(client: Any) -> None:
     assert response.status_code == 413
 
 
+def test_a_storage_failure_is_a_502(client: Any, stubs: dict[str, Any]) -> None:
+    """The bucket being unreachable is not the client's mistake."""
+    from src.exceptions import PaperStorageError
+
+    stubs["storage"].raises = PaperStorageError("bucket unreachable")
+
+    body = client.post(
+        "/papers", files={"file": ("paper.pdf", b"%PDF-1.4 fake", "application/pdf")}
+    ).json()
+
+    assert body["state"] == "failed"
+    assert "bucket unreachable" in body["detail"]
+
+
 def test_an_unknown_job_is_404(client: Any) -> None:
     assert client.get("/jobs/deadbeef").status_code == 404
 
@@ -433,22 +574,44 @@ def test_health_reports_ok_with_a_populated_corpus(client: Any) -> None:
     assert body["total_papers"] == 2
     assert {c["name"] for c in body["dependencies"]} == {
         "vector_store",
+        "paper_storage",
         "llm",
         "api_key",
     }
 
 
-def test_health_is_degraded_not_unhealthy_on_an_empty_corpus(
-    client: Any, stubs: dict[str, Any]
-) -> None:
-    """The service works; it just has nothing indexed.
+def test_an_empty_corpus_is_healthy(client: Any, stubs: dict[str, Any]) -> None:
+    """Every paper arrives by upload, so an empty store is a new deployment.
 
-    Reporting unhealthy would take a working instance out of a load balancer
-    for a condition only an operator can fix.
+    This used to report ``degraded``, from when the corpus was baked into the
+    image and an empty one meant the build had gone wrong. Now it is the
+    normal first state of every install, and flagging it would train operators
+    to ignore the field.
     """
     stubs["database"].papers = []
 
-    assert client.get("/health").json()["status"] == "degraded"
+    body = client.get("/health").json()
+
+    assert body["status"] == "ok"
+    assert body["total_papers"] == 0
+
+
+def test_health_is_unhealthy_when_storage_fails(client: Any, stubs: dict[str, Any]) -> None:
+    """An unreachable bucket means every upload will fail. That is not ok."""
+    import api.main as main
+
+    def boom() -> Any:
+        raise RuntimeError("bucket unreachable")
+
+    monkey = pytest.MonkeyPatch()
+    monkey.setattr(main, "get_storage", boom)
+    try:
+        body = client.get("/health").json()
+    finally:
+        monkey.undo()
+
+    assert body["status"] == "unhealthy"
+    assert any(c["name"] == "paper_storage" and not c["ok"] for c in body["dependencies"])
 
 
 def test_health_is_unhealthy_when_the_store_fails(client: Any, stubs: dict[str, Any]) -> None:

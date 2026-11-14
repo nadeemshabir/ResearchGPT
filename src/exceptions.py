@@ -92,6 +92,30 @@ class EmptyCollectionError(VectorStoreError):
 # ---------------------------------------------------------------------------
 # Retrieval
 # ---------------------------------------------------------------------------
+class PaperStorageError(ResearchGPTError):
+    """The uploaded-PDF store rejected an operation.
+
+    Separate from :class:`VectorStoreError`: the chunks and the original file
+    live in two different places, and losing one does not mean losing the
+    other. A failure to keep the PDF should not read as a failure to index it.
+    """
+
+
+class PaperAlreadyExistsError(ResearchGPTError):
+    """A paper with this id is already indexed.
+
+    Raised rather than silently overwriting, because two users uploading
+    ``paper.pdf`` would otherwise overwrite each other's work with no warning.
+    """
+
+    def __init__(self, paper_id: str):
+        self.paper_id = paper_id
+        super().__init__(
+            f"A paper with id {paper_id!r} is already indexed. "
+            f"Upload it with replace=true to overwrite it, or choose another id."
+        )
+
+
 class RetrievalError(ResearchGPTError):
     """Retrieval failed."""
 

@@ -18,6 +18,7 @@ from src.generation.answer_generator import AnswerGenerator
 from src.ingestion.database import VectorDatabase
 from src.ingestion.embedder import EmbeddingGenerator
 from src.ingestion.pipeline import IngestionPipeline
+from src.ingestion.storage import PaperStorage
 from src.retrieval.retrieval_system import RetrievalSystem
 from src.utils.logging import get_logger
 
@@ -72,15 +73,34 @@ def get_pipeline() -> IngestionPipeline:
 
 
 @lru_cache(maxsize=1)
+def get_storage() -> PaperStorage:
+    """Where uploaded PDFs are kept. See :mod:`src.ingestion.storage`."""
+    return PaperStorage()
+
+
+@lru_cache(maxsize=1)
 def get_jobs() -> JobRegistry:
     return JobRegistry()
 
 
 def warm_up() -> None:
-    """Build everything now, so the first request is not the slow one."""
+    """Build everything now, so the first request is not the slow one.
+
+    Failures are logged, not raised. A vector store that is unreachable at
+    boot -- a Chroma Cloud blip, a wrong key, a server still starting -- used
+    to kill the process before it could serve ``/health``, so the one endpoint
+    that exists to report the problem was the one guaranteed not to answer.
+    Cloud Run then retried the container, and the operator saw a crash loop
+    instead of a message naming the cause.
+    """
     logger.info("Warming up: loading embedding model and opening the store")
-    get_generator()
-    get_pipeline()
+    try:
+        get_generator()
+        get_pipeline()
+        get_storage()
+    except Exception:  # noqa: BLE001 - /health reports what went wrong
+        logger.exception("Warm-up failed. The service will start and report unhealthy.")
+        return
     logger.info("Warm-up complete")
 
 
@@ -92,6 +112,7 @@ def reset_caches() -> None:
         get_retrieval_system,
         get_generator,
         get_pipeline,
+        get_storage,
         get_jobs,
     ):
         cached.cache_clear()

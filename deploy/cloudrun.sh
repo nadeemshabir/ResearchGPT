@@ -2,23 +2,63 @@
 #
 # Deploy ResearchGPT to Google Cloud Run.
 #
-#   ./deploy/cloudrun.sh PROJECT_ID [REGION]
+#   UPLOAD_BUCKET=my-bucket ./deploy/cloudrun.sh PROJECT_ID [REGION]
 #
 # Builds the image with Cloud Build, stores it in Artifact Registry, and
 # deploys a service. Re-running it deploys a new revision; traffic moves only
 # once the new revision passes its health check.
 #
-# The API key is read from Secret Manager rather than passed as an environment
-# variable, so it never appears in `gcloud run services describe` output or in
-# the Cloud Console UI.
+# Secrets are read from Secret Manager rather than passed as environment
+# variables, so they never appear in `gcloud run services describe` output or
+# in the Cloud Console UI.
+#
+# The service starts with an EMPTY knowledge base. It has no corpus of its own
+# and ships no papers; everything it can answer from is uploaded by its users.
+# That needs two things to outlive the container, because Cloud Run's
+# filesystem does not survive a restart and is not shared between instances:
+#
+#   UPLOAD_BUCKET  a GCS bucket for the uploaded PDFs        (required)
+#   a vector store reachable over the network                (required)
+#
+# One-time setup for both is in docs/DEPLOY.md. This script refuses to deploy
+# without them rather than producing a service that loses every upload.
 
 set -euo pipefail
 
-PROJECT="${1:?Usage: $0 PROJECT_ID [REGION]}"
+PROJECT="${1:?Usage: UPLOAD_BUCKET=... $0 PROJECT_ID [REGION]}"
 REGION="${2:-us-central1}"
 SERVICE="researchgpt"
 REPO="researchgpt"
 IMAGE="${REGION}-docker.pkg.dev/${PROJECT}/${REPO}/${SERVICE}"
+
+# Storage for uploaded PDFs.
+UPLOAD_BUCKET="${UPLOAD_BUCKET:?Set UPLOAD_BUCKET to the GCS bucket for uploaded PDFs. See docs/DEPLOY.md}"
+UPLOAD_PREFIX="${UPLOAD_PREFIX:-papers}"
+
+# Vector store. cloud = Chroma Cloud; http = a Chroma server you run.
+CHROMA_MODE="${CHROMA_MODE:-cloud}"
+# Secret Manager secret holding the Chroma Cloud API key.
+CHROMA_KEY_SECRET="${CHROMA_KEY_SECRET:-researchgpt-chroma-key}"
+
+case "${CHROMA_MODE}" in
+    cloud)
+        CHROMA_TENANT="${CHROMA_TENANT:?CHROMA_MODE=cloud needs CHROMA_TENANT (Chroma Cloud dashboard)}"
+        CHROMA_DATABASE="${CHROMA_DATABASE:?CHROMA_MODE=cloud needs CHROMA_DATABASE (Chroma Cloud dashboard)}"
+        STORE_ENV="CHROMA_MODE=cloud,CHROMA_TENANT=${CHROMA_TENANT},CHROMA_DATABASE=${CHROMA_DATABASE}"
+        STORE_SECRETS=",CHROMA_API_KEY=${CHROMA_KEY_SECRET}:latest"
+        ;;
+    http)
+        CHROMA_HOST="${CHROMA_HOST:?CHROMA_MODE=http needs CHROMA_HOST}"
+        STORE_ENV="CHROMA_MODE=http,CHROMA_HOST=${CHROMA_HOST},CHROMA_PORT=${CHROMA_PORT:-8000},CHROMA_SSL=${CHROMA_SSL:-false}"
+        STORE_SECRETS=""
+        ;;
+    *)
+        echo "CHROMA_MODE must be 'cloud' or 'http'. 'local' is an on-disk store;" >&2
+        echo "on Cloud Run it is wiped on every restart and not shared between" >&2
+        echo "instances, so every upload would be lost. See docs/DEPLOY.md." >&2
+        exit 1
+        ;;
+esac
 
 echo "==> Project ${PROJECT}, region ${REGION}"
 gcloud config set project "${PROJECT}" --quiet
@@ -40,9 +80,15 @@ gcloud artifacts repositories describe "${REPO}" --location "${REGION}" --quiet 
         --description="ResearchGPT container images" \
         --quiet
 
-echo "==> Building. The corpus is fetched and embedded inside the build, which"
-echo "    is the point: Cloud Run's filesystem is ephemeral, so the vector"
-echo "    store has to ship in the image."
+echo "==> Checking the upload bucket exists"
+gcloud storage buckets describe "gs://${UPLOAD_BUCKET}" --quiet >/dev/null 2>&1 || {
+    echo "No bucket gs://${UPLOAD_BUCKET}. Create it and grant the service" >&2
+    echo "account access -- the commands are in docs/DEPLOY.md." >&2
+    exit 1
+}
+
+echo "==> Building. No papers are fetched or indexed: the image ships empty"
+echo "    and the service answers from what its users upload."
 #
 # Machine type matters to the bill, not just the clock. Cloud Build's free
 # allowance covers the *default* machine only; asking for e2-highcpu-8 is
@@ -72,9 +118,9 @@ gcloud run deploy "${SERVICE}" \
     `# room for a few concurrent requests without the kernel killing us.` \
     --memory 2Gi \
     --cpu 2 \
-    `# Startup loads the model and builds a BM25 index over every chunk.` \
-    `# Cloud Run's default 240s startup budget is enough, but only just on a` \
-    `# cold image pull, so it is raised.` \
+    `# Startup loads the model, opens the remote store and builds a BM25` \
+    `# index over whatever is in it. Cloud Run's default 240s startup budget` \
+    `# is enough, but only just on a cold image pull, so it is raised.` \
     --timeout 300 \
     `# The app answers requests on a thread pool sized from the CPU count.` \
     `# Cloud Run's default of 80 concurrent requests per instance would queue` \
@@ -85,8 +131,8 @@ gcloud run deploy "${SERVICE}" \
     `# Scale to zero. This is what keeps it inside the free tier, and it is` \
     `# why the first visitor after an idle period waits for a cold start.` \
     --min-instances 0 \
-    --set-env-vars "LLM_PROVIDER=gemini,LLM_MODEL=gemini-2.5-flash" \
-    --set-secrets "GEMINI_API_KEY=researchgpt-gemini-key:latest" \
+    --set-env-vars "LLM_PROVIDER=gemini,LLM_MODEL=gemini-2.5-flash,UPLOAD_BUCKET=${UPLOAD_BUCKET},UPLOAD_PREFIX=${UPLOAD_PREFIX},${STORE_ENV}" \
+    --set-secrets "GEMINI_API_KEY=researchgpt-gemini-key:latest${STORE_SECRETS}" \
     --quiet
 
 URL="$(gcloud run services describe "${SERVICE}" --region "${REGION}" --format 'value(status.url)')"
@@ -95,3 +141,7 @@ echo
 echo "==> Deployed: ${URL}"
 echo "==> Verifying"
 curl -fsS --max-time 120 "${URL}/health" | python -m json.tool
+echo
+echo "A new deployment has no papers. total_papers: 0 above is correct --"
+echo "upload one in the UI, or with:"
+echo "  curl -F file=@paper.pdf ${URL}/papers"
