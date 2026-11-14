@@ -18,7 +18,7 @@ help:
 	@echo "docker       Build the image (ships empty -- no papers)"
 	@echo "docker-run   Run the image on :7860"
 	@echo "deploy       Deploy to Cloud Run:  make deploy PROJECT=my-project"
-	@echo "             Needs UPLOAD_BUCKET and a remote store. See docs/DEPLOY.md"
+	@echo "             Needs UPLOAD_BUCKET and a remote store. See README.md, Deploying"
 	@echo "test         Run the test suite (offline, no API calls)"
 	@echo "test-cov     Run tests with a coverage report"
 	@echo "lint         Run ruff"
@@ -87,8 +87,8 @@ docker:
 docker-run:
 	docker run --rm -p 7860:7860 --env-file .env researchgpt
 
-# Build with Cloud Build and deploy a Cloud Run revision. See docs/DEPLOY.md
-# for the one-time Secret Manager setup.
+# Build with Cloud Build and deploy a Cloud Run revision. The one-time setup
+# (secrets, Chroma Cloud, the upload bucket) is in README.md, Deploying.
 deploy:
 	./deploy/cloudrun.sh $(PROJECT) $(REGION)
 
@@ -160,7 +160,7 @@ eval-calibrate:
 	python -m eval.calibrate
 
 index:
-	python scripts/index_papers.py --skip Panipat.pdf test_paper.pdf
+	python scripts/index_papers.py --skip Panipat.pdf
 
 reset-db:
 	python scripts/reset_db.py

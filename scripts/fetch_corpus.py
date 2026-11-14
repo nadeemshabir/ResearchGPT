@@ -8,8 +8,8 @@ whatever its users upload.
 
 The eight papers below are still what the evaluation sets in ``eval/data/``
 were written against -- the questions, the hand grades and the unanswerable
-set all refer to them -- so reproducing a number from ``docs/EVALUATION.md``
-means fetching and indexing exactly this list. That is the only reason this
+set all refer to them -- so reproducing an evaluation number means
+fetching and indexing exactly this list. That is the only reason this
 file still exists.
 
 Papers are not committed to the repository: they are large, and redistributing

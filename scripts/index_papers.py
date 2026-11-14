@@ -69,7 +69,10 @@ def main() -> int:
     setup_logging()
 
     if not args.dir.is_dir():
-        print(f"Not a directory: {args.dir}")
+        # data/ is not in the repository, so on a fresh clone this is the
+        # normal first state rather than a typo in --dir.
+        print(f"No folder at {args.dir}.")
+        print("Download the evaluation papers first:  make corpus")
         return 1
 
     skip = set(args.skip)

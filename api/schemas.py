@@ -34,7 +34,7 @@ class QueryRequest(BaseModel):
         default=None,
         description=(
             "Run the four-stage pipeline. Costs 4x the API calls and was not "
-            "shown to be worth it; see docs/EVALUATION.md. Defaults to the "
+            "shown to be worth it in evaluation. Defaults to the "
             "server's configuration."
         ),
     )

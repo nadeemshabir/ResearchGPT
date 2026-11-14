@@ -1,6 +1,6 @@
 """Tests for the evaluation maths, against values computed by hand.
 
-Eight of the nineteen findings in `docs/EVALUATION.md` were bugs in evaluation
+Eight of the nineteen evaluation findings were bugs in evaluation
 code rather than in the system, and twice a failure was being scored as a
 success. Evaluation code that is trusted but untested is exactly how that
 happens, so the arithmetic every published number rests on is pinned here.

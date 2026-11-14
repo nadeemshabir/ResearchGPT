@@ -130,7 +130,7 @@ class Settings(BaseSettings):
     #: Attach citations in code rather than asking the model to write them.
     #: Sources come from chunk metadata, so a citation cannot name a paper that
     #: was never retrieved. Measured: the LLM-written path cited only 30% of
-    #: answers -- see docs/EVALUATION.md.
+    #: answers.
     use_deterministic_citations: bool = True
     #: Vocabulary overlap a paragraph must share with a chunk before that
     #: chunk is cited. Below this the paragraph gets no citation rather than a
@@ -198,7 +198,7 @@ class Settings(BaseSettings):
     # ------------------------------------------------------------------
     # Tuned on BEIR/SciFact (300 queries), not inherited from a tutorial.
     # A sweep from 0.0 to 1.0 peaked at 0.5/0.5 (nDCG@10 0.6972); the previous
-    # 0.7/0.3 default scored 0.6873. See docs/EVALUATION.md.
+    # 0.7/0.3 default scored 0.6873.
     semantic_weight: float = Field(default=0.5, ge=0.0, le=1.0)
     keyword_weight: float = Field(default=0.5, ge=0.0, le=1.0)
 
@@ -227,7 +227,7 @@ class Settings(BaseSettings):
     # cost 28x the latency (179ms -> 4998ms p95) to move nDCG@10 by +0.75
     # points while *lowering* Recall@5 by 1.1. Tuning semantic_weight achieved
     # more, for free. Enable it for corpora where it demonstrably helps, and
-    # prefer a domain-matched cross-encoder. See docs/EVALUATION.md.
+    # prefer a domain-matched cross-encoder.
     use_reranking: bool = False
     use_query_processing: bool = True
     reranker_model: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
